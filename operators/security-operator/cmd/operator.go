@@ -63,6 +63,12 @@ var (
 	scheme = runtime.NewScheme()
 )
 
+const (
+	orgsProviderName = "orgs-core-platform-mesh-io"
+	// providerSeparator must match mcmultiprovider.Options.Separator below.
+	providerSeparator = "#"
+)
+
 var operatorCmd = &cobra.Command{
 	Use: "fga",
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -150,7 +156,7 @@ var operatorCmd = &cobra.Command{
 			return err
 		}
 
-		multiProvider := mcmultiprovider.New(mcmultiprovider.Options{})
+		multiProvider := mcmultiprovider.New(mcmultiprovider.Options{Separator: providerSeparator})
 
 		mgr, err := mcmanager.New(restCfg, multiProvider, mgrOpts)
 		if err != nil {
@@ -162,7 +168,7 @@ var operatorCmd = &cobra.Command{
 			setupLog.Error(err, "unable to add core cluster provider")
 			return err
 		}
-		if err := multiProvider.AddProvider("orgs-core-platform-mesh-io", orgsProvider); err != nil {
+		if err := multiProvider.AddProvider(orgsProviderName, orgsProvider); err != nil {
 			setupLog.Error(err, "unable to add orgs cluster provider")
 			return err
 		}
@@ -190,14 +196,15 @@ var operatorCmd = &cobra.Command{
 			return err
 		}
 		providerLister := iclient.NewProviderLister(orgsProvider.Provider.Provider)
+		orgsEngageOpts := controller.WithClustersFromNamedProvider(orgsProviderName, providerSeparator)
 
-		if err = controller.NewStoreReconciler(ctx, log, fga, mgr, &operatorCfg, providerLister, orgsProvider).
+		if err = controller.NewStoreReconciler(ctx, log, fga, mgr, &operatorCfg, providerLister, orgsEngageOpts).
 			SetupWithManager(mgr, defaultCfg); err != nil {
 			log.Error().Err(err).Str("controller", "store").Msg("unable to create controller")
 			return err
 		}
 		if err = controller.
-			NewAuthorizationModelReconciler(ctx, log, fga, mgr, orgsProvider).
+			NewAuthorizationModelReconciler(ctx, log, fga, mgr, orgsEngageOpts).
 			SetupWithManager(mgr, defaultCfg); err != nil {
 			log.Error().Err(err).Str("controller", "authorizationmodel").Msg("unable to create controller")
 			return err

@@ -52,14 +52,14 @@ import (
 
 // StoreReconciler reconciles a Store object
 type StoreReconciler struct {
-	fga       openfgav1.OpenFGAServiceClient
-	log       *logger.Logger
-	lifecycle *lifecycle.Lifecycle
-	ctx       context.Context
-	provider  multicluster.Provider
+	fga        openfgav1.OpenFGAServiceClient
+	log        *logger.Logger
+	lifecycle  *lifecycle.Lifecycle
+	ctx        context.Context
+	engageOpts mcbuilder.EngageOptions
 }
 
-func NewStoreReconciler(ctx context.Context, log *logger.Logger, fga openfgav1.OpenFGAServiceClient, mcMgr mcmanager.Manager, cfg *config.Config, lister iclient.Lister, provider multicluster.Provider) *StoreReconciler {
+func NewStoreReconciler(ctx context.Context, log *logger.Logger, fga openfgav1.OpenFGAServiceClient, mcMgr mcmanager.Manager, cfg *config.Config, lister iclient.Lister, engageOpts mcbuilder.EngageOptions) *StoreReconciler {
 	lc := lifecycle.New(mcMgr, "StoreReconciler", func() ctrlruntimeclient.Object {
 		return &pmcorev1alpha1.Store{}
 	},
@@ -71,11 +71,11 @@ func NewStoreReconciler(ctx context.Context, log *logger.Logger, fga openfgav1.O
 	).WithConditions(conditions.NewManager())
 
 	return &StoreReconciler{
-		fga:       fga,
-		log:       log,
-		lifecycle: lc,
-		ctx:       ctx,
-		provider:  provider,
+		fga:        fga,
+		log:        log,
+		lifecycle:  lc,
+		ctx:        ctx,
+		engageOpts: engageOpts,
 	}
 }
 
@@ -96,7 +96,7 @@ func (r *StoreReconciler) SetupWithManager(mgr mcmanager.Manager, cfg *platforme
 	predicates := append([]predicate.Predicate{filter.DebugResourcesBehaviourPredicate(cfg.DebugLabelValue)}, evp...)
 	b := mcbuilder.ControllerManagedBy(mgr).
 		Named("store").
-		For(&pmcorev1alpha1.Store{}, mcbuilder.WithClustersFromProvider(r.ctx, r.provider)).
+		For(&pmcorev1alpha1.Store{}, r.engageOpts).
 		WithOptions(controller.TypedOptions[mcreconcile.Request]{MaxConcurrentReconciles: cfg.MaxConcurrentReconciles}).
 		WithEventFilter(predicate.And(predicates...))
 
@@ -123,6 +123,6 @@ func (r *StoreReconciler) SetupWithManager(mgr mcmanager.Manager, cfg *platforme
 				})
 			},
 			mcbuilder.WithPredicates(predicate.GenerationChangedPredicate{}),
-			mcbuilder.WithClustersFromProvider(r.ctx, r.provider),
+			r.engageOpts,
 		).Complete(r)
 }

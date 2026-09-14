@@ -32,10 +32,12 @@ import (
 	"go.platform-mesh.io/subroutines"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/rest"
 	ctrlruntimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -125,6 +127,12 @@ func (r *KcpsetupSubroutine) Process(ctx context.Context, runtimeObj ctrlruntime
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to build kubeconfig")
 		return subroutines.OK(), gcerrors.Wrap(err, "Failed to build kubeconfig")
+	}
+
+	// Migrate root:orgs off the pre-split core.platform-mesh.io binding before applying manifests.
+	if err = r.migrateLegacyOrgsBinding(ctx, cfg); err != nil {
+		log.Error().Err(err).Msg("Failed to migrate legacy root:orgs core.platform-mesh.io binding")
+		return subroutines.OK(), gcerrors.Wrap(err, "Failed to migrate legacy root:orgs core.platform-mesh.io binding")
 	}
 
 	// Create kcp workspaces recursively
@@ -374,6 +382,84 @@ func (r *KcpsetupSubroutine) getAPIExportHashInventory(ctx context.Context, conf
 	inventory["apiExportRootTopologyKcpIoIdentityHash"] = apiExport.Status.IdentityHash
 
 	return inventory, nil
+}
+
+const corePlatformMeshIOExport = "core.platform-mesh.io"
+
+// migrateLegacyOrgsBinding swaps root:orgs off the old, pre-split core.platform-mesh.io binding.
+func (r *KcpsetupSubroutine) migrateLegacyOrgsBinding(ctx context.Context, config *rest.Config) error {
+	log := logger.LoadLoggerFromContext(ctx).ChildLogger("subroutine", r.GetName())
+
+	orgsClient, err := r.kcpHelper.NewKcpClient(config, "root:orgs")
+	if err != nil {
+		return gcerrors.Wrap(err, "Failed to create kcp client for root:orgs workspace")
+	}
+
+	bindings := &unstructured.UnstructuredList{}
+	bindings.SetGroupVersionKind(schema.GroupVersionKind{Group: "apis.kcp.io", Version: "v1alpha2", Kind: "APIBindingList"})
+	if err := orgsClient.List(ctx, bindings); err != nil {
+		// root:orgs may not exist yet on a fresh install; nothing to migrate.
+		return nil //nolint:nilerr
+	}
+
+	var legacyBinding *unstructured.Unstructured
+	for i := range bindings.Items {
+		b := &bindings.Items[i]
+		exportName, _, _ := unstructured.NestedString(b.Object, "spec", "reference", "export", "name")
+		if exportName != corePlatformMeshIOExport {
+			continue
+		}
+		boundResources, _, _ := unstructured.NestedSlice(b.Object, "status", "boundResources")
+		for _, br := range boundResources {
+			resource, ok := br.(map[string]any)
+			if ok && resource["resource"] == "stores" {
+				legacyBinding = b
+				break
+			}
+		}
+	}
+	if legacyBinding == nil {
+		return nil
+	}
+
+	log.Info().Str("binding", legacyBinding.GetName()).
+		Msg("root:orgs still on pre-split core.platform-mesh.io binding, migrating to orgs.core.platform-mesh.io")
+
+	for _, kind := range []string{"Store", "AuthorizationModel"} {
+		list := &unstructured.UnstructuredList{}
+		list.SetGroupVersionKind(schema.GroupVersionKind{Group: corePlatformMeshIOExport, Version: "v1alpha1", Kind: kind + "List"})
+		if err := orgsClient.List(ctx, list); err != nil {
+			return gcerrors.Wrap(err, "Failed to list %ss in root:orgs", kind)
+		}
+		for i := range list.Items {
+			obj := &list.Items[i]
+			if len(obj.GetFinalizers()) == 0 {
+				continue
+			}
+			patch := ctrlruntimeclient.RawPatch(types.JSONPatchType, []byte(`[{"op":"remove","path":"/metadata/finalizers"}]`))
+			if err := orgsClient.Patch(ctx, obj, patch); err != nil {
+				return gcerrors.Wrap(err, "Failed to clear finalizers on %s %s", kind, obj.GetName())
+			}
+		}
+	}
+
+	if err := orgsClient.Delete(ctx, legacyBinding); err != nil && !apierrors.IsNotFound(err) {
+		return gcerrors.Wrap(err, "Failed to delete legacy core.platform-mesh.io binding in root:orgs")
+	}
+
+	bindingName := legacyBinding.GetName()
+	err = wait.PollUntilContextTimeout(ctx, time.Second, 30*time.Second, true, func(ctx context.Context) (bool, error) {
+		check := &unstructured.Unstructured{}
+		check.SetGroupVersionKind(schema.GroupVersionKind{Group: "apis.kcp.io", Version: "v1alpha2", Kind: "APIBinding"})
+		getErr := orgsClient.Get(ctx, types.NamespacedName{Name: bindingName}, check)
+		return apierrors.IsNotFound(getErr), nil
+	})
+	if err != nil {
+		return gcerrors.Wrap(err, "Timed out waiting for legacy core.platform-mesh.io binding to be deleted in root:orgs")
+	}
+
+	log.Info().Msg("legacy core.platform-mesh.io binding removed from root:orgs")
+	return nil
 }
 
 func (r *KcpsetupSubroutine) applyExtraWorkspaces(ctx context.Context, config *rest.Config, inst *pmcorev1alpha1.PlatformMesh) error {

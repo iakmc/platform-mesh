@@ -33,7 +33,9 @@ import (
 	"go.platform-mesh.io/subroutines"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
 	ctrlruntimeclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -540,6 +542,10 @@ users:
 
 	// Create mock KCP client for APIExport lookups
 	mockKcpClient := new(mocks.Client)
+	// migrateLegacyOrgsBinding lists APIBindings in root:orgs first; an
+	// empty list means nothing to migrate.
+	mockKcpClient.EXPECT().List(mock.Anything, mock.Anything).Return(nil).Maybe()
+
 	s.helperMock.EXPECT().
 		NewKcpClient(mock.Anything, "root").
 		Return(mockKcpClient, nil)
@@ -1246,5 +1252,86 @@ func (s *KcpsetupTestSuite) Test_ApplyManifestFromFile_DoesNotSkipNonContentConf
 	kcpClientMock.EXPECT().Apply(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
 
 	err := ApplyManifestFromFile(ctx, path, kcpClientMock, templateData, "root", &pmcorev1alpha1.PlatformMesh{})
+	s.Assert().NoError(err)
+}
+
+func legacyCoreBinding() unstructured.Unstructured {
+	b := unstructured.Unstructured{}
+	b.SetGroupVersionKind(schema.GroupVersionKind{Group: "apis.kcp.io", Version: "v1alpha2", Kind: "APIBinding"})
+	b.SetName("core.platform-mesh.io-abc12")
+	_ = unstructured.SetNestedField(b.Object, "core.platform-mesh.io", "spec", "reference", "export", "name")
+	_ = unstructured.SetNestedSlice(b.Object, []any{
+		map[string]any{"resource": "accounts"},
+		map[string]any{"resource": "stores"},
+		map[string]any{"resource": "authorizationmodels"},
+	}, "status", "boundResources")
+	return b
+}
+
+func (s *KcpsetupTestSuite) Test_migrateLegacyOrgsBinding_NoLegacyBinding() {
+	ctx := context.WithValue(context.Background(), keys.LoggerCtxKey, s.log)
+
+	orgsClientMock := new(mocks.Client)
+	s.helperMock.EXPECT().NewKcpClient(mock.Anything, "root:orgs").Return(orgsClientMock, nil)
+
+	orgsClientMock.EXPECT().List(mock.Anything, mock.Anything).RunAndReturn(
+		func(ctx context.Context, ol ctrlruntimeclient.ObjectList, lo ...ctrlruntimeclient.ListOption) error {
+			list := ol.(*unstructured.UnstructuredList)
+			// A binding to a different/already-trimmed export: nothing to migrate.
+			b := unstructured.Unstructured{}
+			b.SetName("orgs.core.platform-mesh.io")
+			_ = unstructured.SetNestedField(b.Object, "orgs.core.platform-mesh.io", "spec", "reference", "export", "name")
+			list.Items = []unstructured.Unstructured{b}
+			return nil
+		})
+
+	err := s.testObj.migrateLegacyOrgsBinding(ctx, &rest.Config{})
+	s.Assert().NoError(err)
+	orgsClientMock.AssertNotCalled(s.T(), "Delete", mock.Anything, mock.Anything)
+	orgsClientMock.AssertNotCalled(s.T(), "Patch", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func (s *KcpsetupTestSuite) Test_migrateLegacyOrgsBinding_WorkspaceNotFound() {
+	ctx := context.WithValue(context.Background(), keys.LoggerCtxKey, s.log)
+
+	orgsClientMock := new(mocks.Client)
+	s.helperMock.EXPECT().NewKcpClient(mock.Anything, "root:orgs").Return(orgsClientMock, nil)
+	orgsClientMock.EXPECT().List(mock.Anything, mock.Anything).Return(errors.New("workspace not found"))
+
+	err := s.testObj.migrateLegacyOrgsBinding(ctx, &rest.Config{})
+	s.Assert().NoError(err)
+}
+
+func (s *KcpsetupTestSuite) Test_migrateLegacyOrgsBinding_MigratesLegacyBinding() {
+	ctx := context.WithValue(context.Background(), keys.LoggerCtxKey, s.log)
+
+	orgsClientMock := new(mocks.Client)
+	s.helperMock.EXPECT().NewKcpClient(mock.Anything, "root:orgs").Return(orgsClientMock, nil)
+
+	binding := legacyCoreBinding()
+
+	orgsClientMock.EXPECT().List(mock.Anything, mock.Anything).RunAndReturn(
+		func(ctx context.Context, ol ctrlruntimeclient.ObjectList, lo ...ctrlruntimeclient.ListOption) error {
+			list := ol.(*unstructured.UnstructuredList)
+			switch list.GroupVersionKind().Kind {
+			case "APIBindingList":
+				list.Items = []unstructured.Unstructured{binding}
+			case "StoreList":
+				store := unstructured.Unstructured{}
+				store.SetName("orgs")
+				store.SetFinalizers([]string{"core.platform-mesh.io/fga-store"})
+				list.Items = []unstructured.Unstructured{store}
+			case "AuthorizationModelList":
+				list.Items = []unstructured.Unstructured{}
+			}
+			return nil
+		}).Times(3)
+
+	orgsClientMock.EXPECT().Patch(mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+	orgsClientMock.EXPECT().Delete(mock.Anything, mock.Anything).Return(nil).Once()
+	orgsClientMock.EXPECT().Get(mock.Anything, types.NamespacedName{Name: binding.GetName()}, mock.Anything).
+		Return(apierrors.NewNotFound(schema.GroupResource{Group: "apis.kcp.io", Resource: "apibindings"}, binding.GetName()))
+
+	err := s.testObj.migrateLegacyOrgsBinding(ctx, &rest.Config{})
 	s.Assert().NoError(err)
 }

@@ -17,6 +17,11 @@ kind: APIExport
 metadata:
   name: ui.platform-mesh.io
 spec:
+  # Shares core.platform-mesh.io's identity so kcp (>=v0.33.0) adopts contentconfigurations/providermetadatas from the legacy binding.
+  identity:
+    secretRef:
+      namespace: kcp-system
+      name: core.platform-mesh.io
   resources:
   - group: ui.platform-mesh.io
     name: contentconfigurations

@@ -65,9 +65,12 @@ import (
 	mcmultiprovider "sigs.k8s.io/multicluster-runtime/providers/multi"
 
 	kcptenancyv1alpha "github.com/kcp-dev/kcp/sdk/apis/tenancy/v1alpha1"
+	mcapiexportprovider "github.com/kcp-dev/multicluster-provider/apiexport"
 	kcpapisv1alpha1 "github.com/kcp-dev/sdk/apis/apis/v1alpha1"
 	kcpapisv1alpha2 "github.com/kcp-dev/sdk/apis/apis/v1alpha2"
 )
+
+const testWaitForKcpAdminKubeconfigPeriod = time.Second * 15
 
 type KindTestSuite struct {
 	suite.Suite
@@ -221,7 +224,7 @@ func (s *KindTestSuite) createKindCluster() error {
 		}
 
 		s.logger.Info().Msg("Creating Kind cluster...")
-		if _, err = runCommand(kindBinary(), "create", "cluster", "--config", "../../../kind-config.yaml", "--name", clusterName, "--image=kindest/node:v1.30.2"); err != nil {
+		if _, err = runCommand(kindBinary(), "create", "cluster", "--config", "../../../kind-config.yaml", "--name", clusterName, "--image=kindest/node:v1.34.11"); err != nil {
 			return err
 		}
 	}
@@ -754,5 +757,70 @@ func (s *KindTestSuite) runPlatformMeshOperator(ctx context.Context) {
 	}()
 	s.logger.Info().Msg("PlatformMesh operator started")
 
+	go s.startProvidersOperator(ctx, mgr, &appConfig, commonConfig, mgr.GetLocalManager().GetClient())
+
 	s.mgr = mgr
+}
+
+// startProvidersOperator mirrors cmd/operator.go: wires ProviderReconciler against the
+// providers.platform-mesh.io export, without which WaitProviderSubroutine hangs forever.
+func (s *KindTestSuite) startProvidersOperator(
+	ctx context.Context, mgr mcmanager.Manager, appConfig *config.OperatorConfig,
+	commonConfig *pmconfig.CommonServiceConfig, localClient ctrlruntimeclient.Client,
+) {
+	multiProvider, ok := mgr.GetProvider().(*mcmultiprovider.Provider)
+	if !ok {
+		s.logger.Error().Msg("manager provider is not a multi-provider, cannot register apiexport-providers-platform-mesh provider")
+		return
+	}
+
+	kcpUrl := appConfig.KCP.Url
+	if kcpUrl == "" {
+		kcpUrl = fmt.Sprintf("https://%s-front-proxy.%s:%s", appConfig.KCP.FrontProxyName, appConfig.KCP.Namespace, appConfig.KCP.FrontProxyPort)
+	}
+	kcpUrl += fmt.Sprintf("/clusters/%s", appConfig.Providers.ProvidersAPIExportEndpointSliceWorkspace)
+
+	var kcpCfg *rest.Config
+	err := wait.PollUntilContextCancel(ctx, testWaitForKcpAdminKubeconfigPeriod, true, func(ctx context.Context) (bool, error) {
+		var buildErr error
+		kcpCfg, buildErr = subroutines.BuildKubeconfigFromConfig(localClient, &appConfig.KCP, kcpUrl)
+		if buildErr != nil {
+			s.logger.Warn().Err(buildErr).Msg("trying to retrieve kcp admin kubeconfig for providers operator")
+		}
+		return buildErr == nil, nil
+	})
+	if err != nil {
+		s.logger.Error().Err(err).Msg("failed to retrieve kcp admin config for providers operator")
+		return
+	}
+
+	var apiexportProvider *mcapiexportprovider.Provider
+	err = wait.PollUntilContextCancel(ctx, testWaitForKcpAdminKubeconfigPeriod, true, func(ctx context.Context) (bool, error) {
+		var provErr error
+		apiexportProvider, provErr = mcapiexportprovider.New(kcpCfg, appConfig.Providers.ProvidersAPIExportEndpointSliceName, mcapiexportprovider.Options{Scheme: s.scheme})
+		if provErr != nil {
+			s.logger.Warn().Err(provErr).Msg("failed to create APIExport provider")
+		}
+		return provErr == nil, nil
+	})
+	if err != nil {
+		s.logger.Error().Err(err).Msg("failed to create apiexport-providers-platform-mesh provider")
+		return
+	}
+
+	providersReconciler, err := providerscontroller.NewProviderReconciler(mgr, appConfig, commonConfig, localClient)
+	if err != nil {
+		s.logger.Error().Err(err).Msg("failed to create Providers reconciler")
+		return
+	}
+	if err := providersReconciler.SetupWithManager(mgr, commonConfig); err != nil {
+		s.logger.Error().Err(err).Msg("unable to setup ProviderReconciler with manager")
+		return
+	}
+
+	if err := multiProvider.AddProvider("apiexport-providers-platform-mesh", apiexportProvider); err != nil {
+		s.logger.Error().Err(err).Msg("failed to add apiexport-providers-platform-mesh provider")
+		return
+	}
+	s.logger.Info().Msg("apiexport-providers-platform-mesh provider started, ProviderReconciler registered")
 }

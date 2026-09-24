@@ -490,17 +490,10 @@ func (r *KcpsetupSubroutine) migrateLegacyOrgsBinding(ctx context.Context, confi
 	return nil
 }
 
-// providerWorkspaceTypePath is the provider WorkspaceType's own path, as checked against PlatformMesh.spec.kcp.extraDefaultAPIBindings.
-const providerWorkspaceTypePath = "root:provider"
-
-// uiExportPath returns the extraDefaultAPIBindings path for ui.platform-mesh.io on provider workspaces, and whether the deployer opted in at all.
-func uiExportPath(inst *pmcorev1alpha1.PlatformMesh) (string, bool) {
-	for _, b := range inst.Spec.Kcp.ExtraDefaultAPIBindings {
-		if b.WorkspaceTypePath == providerWorkspaceTypePath && b.Export == "ui.platform-mesh.io" {
-			return b.Path, true
-		}
-	}
-	return "", false
+// uiExportPath returns the path ui.platform-mesh.io lives at for provider workspaces.
+// Unconditional, so existing providers migrate to it rather than being left behind.
+func uiExportPath(_ *pmcorev1alpha1.PlatformMesh) (string, bool) {
+	return "root:platform-mesh-system", true
 }
 
 // migrateLegacyProviderBindings does for existing provider workspaces what migrateLegacyOrgsBinding does for root:orgs.

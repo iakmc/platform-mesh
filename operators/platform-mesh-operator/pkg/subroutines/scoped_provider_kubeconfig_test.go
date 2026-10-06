@@ -44,7 +44,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/utils/ptr"
 
-	kcpapiv1alpha1 "github.com/kcp-dev/kcp/sdk/apis/apis/v1alpha1"
+	kcpapiv1alpha1 "github.com/kcp-dev/sdk/apis/apis/v1alpha1"
 )
 
 func TestVirtualWorkspacePathFromSlice(t *testing.T) {

@@ -39,7 +39,7 @@ import (
 	ctrlruntimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 	mcmultiprovider "sigs.k8s.io/multicluster-runtime/providers/multi"
 
-	kcptenancyv1alpha "github.com/kcp-dev/kcp/sdk/apis/tenancy/v1alpha1"
+	kcptenancyv1alpha "github.com/kcp-dev/sdk/apis/tenancy/v1alpha1"
 	mcapiexportprovider "github.com/kcp-dev/multicluster-provider/apiexport"
 )
 

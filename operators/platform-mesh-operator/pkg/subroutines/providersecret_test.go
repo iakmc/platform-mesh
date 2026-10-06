@@ -48,7 +48,7 @@ import (
 	ctrlruntimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	kcpapiv1alpha "github.com/kcp-dev/kcp/sdk/apis/apis/v1alpha1"
+	kcpapiv1alpha "github.com/kcp-dev/sdk/apis/apis/v1alpha1"
 )
 
 var secretKubeconfigData, _ = os.ReadFile("test/kubeconfig.yaml")

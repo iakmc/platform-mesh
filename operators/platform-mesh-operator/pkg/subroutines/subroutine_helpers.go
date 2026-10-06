@@ -62,10 +62,10 @@ import (
 	ctrlruntimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 
-	kcpapiv1alpha "github.com/kcp-dev/kcp/sdk/apis/apis/v1alpha1"
-	kcpapiv1alpha2 "github.com/kcp-dev/kcp/sdk/apis/apis/v1alpha2"
-	kcpcorev1alpha "github.com/kcp-dev/kcp/sdk/apis/core/v1alpha1"
-	kcptenancyv1alpha "github.com/kcp-dev/kcp/sdk/apis/tenancy/v1alpha1"
+	kcpapiv1alpha "github.com/kcp-dev/sdk/apis/apis/v1alpha1"
+	kcpapiv1alpha2 "github.com/kcp-dev/sdk/apis/apis/v1alpha2"
+	kcpcorev1alpha "github.com/kcp-dev/sdk/apis/core/v1alpha1"
+	kcptenancyv1alpha "github.com/kcp-dev/sdk/apis/tenancy/v1alpha1"
 )
 
 type KcpHelper interface {

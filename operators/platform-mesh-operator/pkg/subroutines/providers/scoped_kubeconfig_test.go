@@ -40,7 +40,7 @@ import (
 	mccontext "sigs.k8s.io/multicluster-runtime/pkg/context"
 	"sigs.k8s.io/multicluster-runtime/pkg/multicluster"
 
-	kcptenancyv1alpha "github.com/kcp-dev/kcp/sdk/apis/tenancy/v1alpha1"
+	kcptenancyv1alpha "github.com/kcp-dev/sdk/apis/tenancy/v1alpha1"
 )
 
 type ScopedKubeconfigTestSuite struct {

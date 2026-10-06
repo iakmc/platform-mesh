@@ -40,8 +40,8 @@ import (
 	ctrlruntimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	kcpapiv1alpha1 "github.com/kcp-dev/kcp/sdk/apis/apis/v1alpha1"
-	kcpapiv1alpha2 "github.com/kcp-dev/kcp/sdk/apis/apis/v1alpha2"
+	kcpapiv1alpha1 "github.com/kcp-dev/sdk/apis/apis/v1alpha1"
+	kcpapiv1alpha2 "github.com/kcp-dev/sdk/apis/apis/v1alpha2"
 )
 
 const (

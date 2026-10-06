@@ -617,10 +617,14 @@ github.com/kcp-dev/apimachinery/v2 v2.31.2-0.20260505083940-abda469632ba/go.mod 
 github.com/kcp-dev/client-go v0.28.1-0.20260511140521-487de9552c40/go.mod h1:SVLehuEWP57f8F4rKUn8hJXCFXJFtER4va77pY+x2m8=
 github.com/kcp-dev/client-go v0.33.0 h1:BZA2xbSi76idNoe4I4fmNNoGV9q2UIeB82kS7QeYeHo=
 github.com/kcp-dev/client-go v0.33.0/go.mod h1:CXPF+AHW5FPdOcxdiZ88Q7+6AwA/YVlBlmqxMN1NN6U=
+github.com/kcp-dev/client-go v0.33.1 h1:GEvN2u4DQ9TWXnbYMEQUgqCCphjWAnfQNVEGshrgWew=
+github.com/kcp-dev/client-go v0.33.1/go.mod h1:gWK5Y4BWkkY/yhQXaNmetAcaAxZ5lEZcXyjl5gvQHYo=
 github.com/kcp-dev/code-generator/v3 v3.32.3 h1:xs5XBDfO8XMaQWGScS/e98UNbMJ2g7f2nhksvcOK17w=
 github.com/kcp-dev/code-generator/v3 v3.32.3/go.mod h1:1OaW64ALeGKyw8G8RRv2vHsXDPgOoDuiNBG0RW6dWNI=
 github.com/kcp-dev/code-generator/v3 v3.33.0 h1:yWBdQLeIYqr487874OeqCTk773WzPB3fwrGWW2ztjEk=
 github.com/kcp-dev/code-generator/v3 v3.33.0/go.mod h1:1OaW64ALeGKyw8G8RRv2vHsXDPgOoDuiNBG0RW6dWNI=
+github.com/kcp-dev/code-generator/v3 v3.33.1 h1:YMVgay7BJTs50tUqUXTjrSRkAxRk6ZNvsveCv4lbYI4=
+github.com/kcp-dev/code-generator/v3 v3.33.1/go.mod h1:1OaW64ALeGKyw8G8RRv2vHsXDPgOoDuiNBG0RW6dWNI=
 github.com/kcp-dev/embeddedetcd v1.1.1-0.20260402110232-2cc5c5cce35e h1:nOcf6Id7wozcS2pwoNNmuKqIozAAn/K+0wu3z7xGxE0=
 github.com/kcp-dev/embeddedetcd v1.1.1-0.20260402110232-2cc5c5cce35e/go.mod h1:bv5D/GGLuILI1Y5tZzbBvzOjkdixKS9lM+bbN1vWZTE=
 github.com/kcp-dev/kubernetes/staging/src/k8s.io/cli-runtime v0.0.0-20260602065202-e006560fc76a h1:NtJ9xqcyfYM4c/smHzN0butj7POt/9QfYMdleAWO4xk=

@@ -27,6 +27,9 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
+// ZZ prefix (not an acronym) forces these to run after every other Test*
+// method: testify's suite runs methods in reflect's lexicographic order.
+
 // TestZZAGiveReconcilerTime keeps the manager alive long enough (past a
 // stale-Ready status check returning instantly) for a real informer-driven
 // reconcile of the already-existing PlatformMesh to actually run.

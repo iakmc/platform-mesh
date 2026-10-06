@@ -64,6 +64,7 @@ var (
 )
 
 const (
+	coreProviderName = "core-platform-mesh-io"
 	orgsProviderName = "orgs-core-platform-mesh-io"
 	// providerSeparator must match mcmultiprovider.Options.Separator below.
 	providerSeparator = "#"
@@ -164,7 +165,7 @@ var operatorCmd = &cobra.Command{
 			return err
 		}
 
-		if err := multiProvider.AddProvider("core-platform-mesh-io", provider); err != nil {
+		if err := multiProvider.AddProvider(coreProviderName, provider); err != nil {
 			setupLog.Error(err, "unable to add core cluster provider")
 			return err
 		}

@@ -14,8 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package migrations holds idempotent steps that bring a running kcp
-// workspace tree in line with the operator's current APIExport/APIBinding shape.
 package migrations
 
 import (
@@ -34,68 +32,8 @@ import (
 	"k8s.io/client-go/rest"
 	ctrlruntimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 
-	kcptenancyv1alpha "github.com/kcp-dev/sdk/apis/tenancy/v1alpha1"
+	kcptenancyv1alpha1 "github.com/kcp-dev/sdk/apis/tenancy/v1alpha1"
 )
-
-// KcpClientFactory copies subroutines.KcpHelper's method, avoids an import cycle.
-type KcpClientFactory interface {
-	NewKcpClient(config *rest.Config, workspacePath string) (ctrlruntimeclient.Client, error)
-}
-
-// Matches subroutines.fieldManagerKcpSetup, must stay identical: this is
-// the field manager identity server-side apply uses for ownership.
-const fieldManagerKcpSetup = "platform-mesh-kcp-setup"
-
-// Deps is what a Migration needs: generic kcp/client plumbing, not
-// subroutine internals.
-type Deps struct {
-	KcpHelper KcpClientFactory
-	Config    *rest.Config
-	Instance  *pmcorev1alpha1.PlatformMesh
-}
-
-// Migration is one idempotent migration step, checked on every reconcile.
-// A run against already-migrated or never-legacy state must be a no-op.
-type Migration interface {
-	// Name identifies the step in logs and wrapped errors.
-	Name() string
-	// Migrate checks for the legacy state this step handles and fixes it up
-	// if found.
-	Migrate(ctx context.Context, deps Deps) error
-}
-
-// Migrator runs a fixed, ordered list of Migration steps.
-type Migrator struct {
-	steps []Migration
-}
-
-func NewMigrator(steps ...Migration) *Migrator {
-	return &Migrator{steps: steps}
-}
-
-// Default returns the migrator wired with every migration step the operator
-// currently ships.
-func Default() *Migrator {
-	return NewMigrator(
-		fgaAPIExportSplitMigration{},
-		providerAPIExportSplitMigration{},
-	)
-}
-
-// Migrate runs every step in order, stopping at the first error. Steps
-// must be idempotent so a retry safely restarts from the top.
-func (m *Migrator) Migrate(ctx context.Context, deps Deps) error {
-	log := logger.LoadLoggerFromContext(ctx).ChildLogger("component", "migrations")
-
-	for _, step := range m.steps {
-		if err := step.Migrate(ctx, deps); err != nil {
-			return gcerrors.Wrap(err, "migration %s failed", step.Name())
-		}
-		log.Debug().Str("migration", step.Name()).Msg("migration step checked")
-	}
-
-	return nil
-}
 
 const corePlatformMeshIOExport = "core.platform-mesh.io"
 
@@ -166,14 +104,14 @@ func applyBinding(ctx context.Context, client ctrlruntimeclient.Client, name, ex
 		ctrlruntimeclient.FieldOwner(fieldManagerKcpSetup), ctrlruntimeclient.ForceOwnership)
 }
 
-// fgaAPIExportSplitMigration swaps root:orgs off the pre-split core.platform-mesh.io
+// fgaAPIExportSplit swaps root:orgs off the pre-split core.platform-mesh.io
 // binding onto fga.platform-mesh.io, which shares identity so kcp adopts automatically.
 // Safe to remove once every environment has reconciled past this change (#171/#47).
-type fgaAPIExportSplitMigration struct{}
+type fgaAPIExportSplit struct{}
 
-func (fgaAPIExportSplitMigration) Name() string { return "fga-apiexport-split" }
+func (fgaAPIExportSplit) Name() string { return "fga-apiexport-split" }
 
-func (fgaAPIExportSplitMigration) Migrate(ctx context.Context, deps Deps) error {
+func (fgaAPIExportSplit) Run(ctx context.Context, deps Deps) error {
 	log := logger.LoadLoggerFromContext(ctx).ChildLogger("migration", "fga-apiexport-split")
 
 	orgsClient, err := deps.KcpHelper.NewKcpClient(deps.Config, "root:orgs")
@@ -216,20 +154,20 @@ func uiExportPath(_ *pmcorev1alpha1.PlatformMesh) (string, bool) {
 	return "root:platform-mesh-system", true
 }
 
-// providerAPIExportSplitMigration does for provider workspaces what
-// fgaAPIExportSplitMigration does for root:orgs (trimmed core.platform-mesh.io + ui.platform-mesh.io).
-// Safe to remove under the same condition as fgaAPIExportSplitMigration above.
-type providerAPIExportSplitMigration struct{}
+// providerAPIExportSplit does for provider workspaces what
+// fgaAPIExportSplit does for root:orgs (trimmed core.platform-mesh.io + ui.platform-mesh.io).
+// Safe to remove under the same condition as fgaAPIExportSplit above.
+type providerAPIExportSplit struct{}
 
-func (providerAPIExportSplitMigration) Name() string { return "provider-apiexport-split" }
+func (providerAPIExportSplit) Name() string { return "provider-apiexport-split" }
 
-func (providerAPIExportSplitMigration) Migrate(ctx context.Context, deps Deps) error {
+func (providerAPIExportSplit) Run(ctx context.Context, deps Deps) error {
 	providersClient, err := deps.KcpHelper.NewKcpClient(deps.Config, "root:providers")
 	if err != nil {
 		return gcerrors.Wrap(err, "Failed to create kcp client for root:providers workspace")
 	}
 
-	var workspaces kcptenancyv1alpha.WorkspaceList
+	var workspaces kcptenancyv1alpha1.WorkspaceList
 	if err := providersClient.List(ctx, &workspaces); err != nil {
 		// root:providers may not exist yet on a fresh install; nothing to migrate.
 		return nil //nolint:nilerr
@@ -245,7 +183,7 @@ func (providerAPIExportSplitMigration) Migrate(ctx context.Context, deps Deps) e
 			return gcerrors.Wrap(err, "Failed to migrate legacy provider binding for %s", ws.Name)
 		}
 	}
-	
+
 	return nil
 }
 

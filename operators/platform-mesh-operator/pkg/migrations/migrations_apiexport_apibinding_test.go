@@ -38,7 +38,7 @@ import (
 	"k8s.io/client-go/rest"
 	ctrlruntimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 
-	kcptenancyv1alpha "github.com/kcp-dev/sdk/apis/tenancy/v1alpha1"
+	kcptenancyv1alpha1 "github.com/kcp-dev/sdk/apis/tenancy/v1alpha1"
 )
 
 type MigrationTestSuite struct {
@@ -77,7 +77,7 @@ func legacyCoreBinding() unstructured.Unstructured {
 	return b
 }
 
-func (s *MigrationTestSuite) Test_fgaAPIExportSplitMigration_NoLegacyBinding() {
+func (s *MigrationTestSuite) Test_fgaAPIExportSplit_NoLegacyBinding() {
 	ctx := context.WithValue(context.Background(), keys.LoggerCtxKey, s.log)
 
 	orgsClientMock := new(mocks.Client)
@@ -94,24 +94,24 @@ func (s *MigrationTestSuite) Test_fgaAPIExportSplitMigration_NoLegacyBinding() {
 			return nil
 		})
 
-	err := fgaAPIExportSplitMigration{}.Migrate(ctx, Deps{KcpHelper: s.helperMock, Config: &rest.Config{}})
+	err := fgaAPIExportSplit{}.Run(ctx, Deps{KcpHelper: s.helperMock, Config: &rest.Config{}})
 	s.Assert().NoError(err)
 	orgsClientMock.AssertNotCalled(s.T(), "Delete", mock.Anything, mock.Anything)
 	orgsClientMock.AssertNotCalled(s.T(), "Patch", mock.Anything, mock.Anything, mock.Anything)
 }
 
-func (s *MigrationTestSuite) Test_fgaAPIExportSplitMigration_WorkspaceNotFound() {
+func (s *MigrationTestSuite) Test_fgaAPIExportSplit_WorkspaceNotFound() {
 	ctx := context.WithValue(context.Background(), keys.LoggerCtxKey, s.log)
 
 	orgsClientMock := new(mocks.Client)
 	s.helperMock.EXPECT().NewKcpClient(mock.Anything, "root:orgs").Return(orgsClientMock, nil)
 	orgsClientMock.EXPECT().List(mock.Anything, mock.Anything).Return(errors.New("workspace not found"))
 
-	err := fgaAPIExportSplitMigration{}.Migrate(ctx, Deps{KcpHelper: s.helperMock, Config: &rest.Config{}})
+	err := fgaAPIExportSplit{}.Run(ctx, Deps{KcpHelper: s.helperMock, Config: &rest.Config{}})
 	s.Assert().NoError(err)
 }
 
-func (s *MigrationTestSuite) Test_fgaAPIExportSplitMigration_MigratesLegacyBinding() {
+func (s *MigrationTestSuite) Test_fgaAPIExportSplit_MigratesLegacyBinding() {
 	ctx := context.WithValue(context.Background(), keys.LoggerCtxKey, s.log)
 
 	orgsClientMock := new(mocks.Client)
@@ -138,7 +138,7 @@ func (s *MigrationTestSuite) Test_fgaAPIExportSplitMigration_MigratesLegacyBindi
 	orgsClientMock.EXPECT().Get(mock.Anything, types.NamespacedName{Name: binding.GetName()}, mock.Anything).
 		Return(apierrors.NewNotFound(schema.GroupResource{Group: "apis.kcp.io", Resource: "apibindings"}, binding.GetName()))
 
-	err := fgaAPIExportSplitMigration{}.Migrate(ctx, Deps{KcpHelper: s.helperMock, Config: &rest.Config{}})
+	err := fgaAPIExportSplit{}.Run(ctx, Deps{KcpHelper: s.helperMock, Config: &rest.Config{}})
 	s.Assert().NoError(err)
 	s.Assert().JSONEq(`{"spec":{"deletionPolicy":"WaitForSuccessor"}}`, string(patchedPolicy))
 }
@@ -156,35 +156,35 @@ func legacyProviderCoreBinding() unstructured.Unstructured {
 	return b
 }
 
-func (s *MigrationTestSuite) Test_providerAPIExportSplitMigration_NoWorkspaces() {
+func (s *MigrationTestSuite) Test_providerAPIExportSplit_NoWorkspaces() {
 	ctx := context.WithValue(context.Background(), keys.LoggerCtxKey, s.log)
 
 	providersClientMock := new(mocks.Client)
 	s.helperMock.EXPECT().NewKcpClient(mock.Anything, "root:providers").Return(providersClientMock, nil)
 	providersClientMock.EXPECT().List(mock.Anything, mock.Anything).RunAndReturn(
 		func(ctx context.Context, ol ctrlruntimeclient.ObjectList, lo ...ctrlruntimeclient.ListOption) error {
-			list := ol.(*kcptenancyv1alpha.WorkspaceList)
+			list := ol.(*kcptenancyv1alpha1.WorkspaceList)
 			list.Items = nil
 			return nil
 		})
 
-	err := providerAPIExportSplitMigration{}.Migrate(ctx, Deps{KcpHelper: s.helperMock, Config: &rest.Config{}, Instance: &pmcorev1alpha1.PlatformMesh{}})
+	err := providerAPIExportSplit{}.Run(ctx, Deps{KcpHelper: s.helperMock, Config: &rest.Config{}, Instance: &pmcorev1alpha1.PlatformMesh{}})
 	s.Assert().NoError(err)
 }
 
-func (s *MigrationTestSuite) Test_providerAPIExportSplitMigration_SkipsSystemWorkspace() {
+func (s *MigrationTestSuite) Test_providerAPIExportSplit_SkipsSystemWorkspace() {
 	ctx := context.WithValue(context.Background(), keys.LoggerCtxKey, s.log)
 
 	providersClientMock := new(mocks.Client)
 	s.helperMock.EXPECT().NewKcpClient(mock.Anything, "root:providers").Return(providersClientMock, nil)
 	providersClientMock.EXPECT().List(mock.Anything, mock.Anything).RunAndReturn(
 		func(ctx context.Context, ol ctrlruntimeclient.ObjectList, lo ...ctrlruntimeclient.ListOption) error {
-			list := ol.(*kcptenancyv1alpha.WorkspaceList)
-			list.Items = []kcptenancyv1alpha.Workspace{{ObjectMeta: metav1.ObjectMeta{Name: "system"}}}
+			list := ol.(*kcptenancyv1alpha1.WorkspaceList)
+			list.Items = []kcptenancyv1alpha1.Workspace{{ObjectMeta: metav1.ObjectMeta{Name: "system"}}}
 			return nil
 		})
 
-	err := providerAPIExportSplitMigration{}.Migrate(ctx, Deps{KcpHelper: s.helperMock, Config: &rest.Config{}, Instance: &pmcorev1alpha1.PlatformMesh{}})
+	err := providerAPIExportSplit{}.Run(ctx, Deps{KcpHelper: s.helperMock, Config: &rest.Config{}, Instance: &pmcorev1alpha1.PlatformMesh{}})
 	s.Assert().NoError(err)
 	s.helperMock.AssertNotCalled(s.T(), "NewKcpClient", mock.Anything, "root:providers:system")
 }

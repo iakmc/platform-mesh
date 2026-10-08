@@ -642,6 +642,27 @@ func TestCreateRouterResourceParamTakesPrecedence(t *testing.T) {
 	}
 }
 
+func TestCORSPreflightReturns200(t *testing.T) {
+	paths := []string{
+		"/rest/v1/search",
+		"/rest/v1/search/resources",
+		"/rest/v1/search/filter-values",
+	}
+	r := CreateRouter(&fakeSearchService{}, nil)
+	for _, path := range paths {
+		t.Run(path, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodOptions, path, nil)
+			req.Header.Set("Origin", "https://example.com")
+			req.Header.Set("Access-Control-Request-Method", "GET")
+			r.ServeHTTP(rr, req)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("expected 200 for OPTIONS %s, got %d", path, rr.Code)
+			}
+		})
+	}
+}
+
 func TestErrorContractAcrossEndpoints(t *testing.T) {
 	for _, path := range []string{"/rest/v1/search?resource=accounts", "/rest/v1/search/resources", "/rest/v1/search/filter-values?resource=accounts&field=name"} {
 		t.Run(path, func(t *testing.T) {

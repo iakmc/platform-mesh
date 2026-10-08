@@ -27,6 +27,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/cors"
 
 	"go.platform-mesh.io/golang-commons/logger"
 	appcontext "go.platform-mesh.io/search-service/internal/context"
@@ -44,6 +45,8 @@ type SearchService interface {
 
 func CreateRouter(svc SearchService, mws []func(http.Handler) http.Handler) *chi.Mux {
 	router := chi.NewRouter()
+
+	router.Use(cors.AllowAll().Handler)
 
 	router.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		httperr.Write(w, r, httperr.NotFound)

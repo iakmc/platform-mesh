@@ -65,7 +65,7 @@ var (
 
 const (
 	coreProviderName = "core-platform-mesh-io"
-	fgaProviderName = "fga-platform-mesh-io"
+	fgaProviderName  = "fga-platform-mesh-io"
 	// providerSeparator must match mcmultiprovider.Options.Separator below.
 	providerSeparator = "#"
 )

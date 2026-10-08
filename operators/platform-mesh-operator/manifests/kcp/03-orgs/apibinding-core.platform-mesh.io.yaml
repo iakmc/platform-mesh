@@ -12,12 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Applied every reconcile so this comes back if migrateLegacyOrgsBinding removes the old one.
 apiVersion: apis.kcp.io/v1alpha2
 kind: APIBinding
 metadata:
-  # Not named "core.platform-mesh.io": that name is special-cased in subroutine_helpers.go for a lookup that only works in root:platform-mesh-system.
-  name: core.platform-mesh.io-orgs
+  name: core.platform-mesh.io
 spec:
   reference:
     export:

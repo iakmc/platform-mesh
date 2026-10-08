@@ -40,8 +40,8 @@ import (
 	"k8s.io/client-go/rest"
 	ctrlruntimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 
-	kcpapiv1alpha "github.com/kcp-dev/sdk/apis/apis/v1alpha1"
-	kcptenancyv1alpha "github.com/kcp-dev/sdk/apis/tenancy/v1alpha1"
+	kcpapisv1alpha1 "github.com/kcp-dev/sdk/apis/apis/v1alpha1"
+	kcptenancyv1alpha1 "github.com/kcp-dev/sdk/apis/tenancy/v1alpha1"
 )
 
 type KcpsetupSubroutine struct {
@@ -53,7 +53,7 @@ type KcpsetupSubroutine struct {
 	caBundleCache map[string]string
 	cfg           *config.OperatorConfig
 	kcpUrl        string
-	migrator      *migrations.Migrator
+	migrator      *migrations.Runner
 }
 
 const (
@@ -71,7 +71,7 @@ func NewKcpsetupSubroutine(client ctrlruntimeclient.Client, helper KcpHelper, cf
 		caBundleCache: make(map[string]string),
 		cfg:           cfg,
 		kcpUrl:        kcpUrl,
-		migrator:      migrations.Default(),
+		migrator:      migrations.New(),
 	}
 }
 
@@ -140,7 +140,7 @@ func (r *KcpsetupSubroutine) Process(ctx context.Context, runtimeObj ctrlruntime
 	// Relies on this reconciler only running on the leader (manager-level LeaderElection
 	// in cmd/operator.go), no separate guard needed here. See pkg/migrations for what
 	// each step does and when it's safe to remove.
-	if err = r.migrator.Migrate(ctx, migrations.Deps{KcpHelper: r.kcpHelper, Config: cfg, Instance: inst}); err != nil {
+	if err = r.migrator.Run(ctx, migrations.Deps{KcpHelper: r.kcpHelper, Config: cfg, Instance: inst}); err != nil {
 		log.Error().Err(err).Msg("Failed to run kcp migrations")
 		return subroutines.OK(), gcerrors.Wrap(err, "Failed to run kcp migrations")
 	}
@@ -362,7 +362,7 @@ func (r *KcpsetupSubroutine) getAPIExportHashInventory(ctx context.Context, conf
 		return inventory, err
 	}
 
-	apiExport := kcpapiv1alpha.APIExport{}
+	apiExport := kcpapisv1alpha1.APIExport{}
 	err = cs.Get(ctx, types.NamespacedName{Name: "tenancy.kcp.io"}, &apiExport)
 	if err != nil {
 		log.Err(err).Msg("Failed to get APIExport for tenancy.kcp.io")
@@ -410,12 +410,12 @@ func (r *KcpsetupSubroutine) applyExtraWorkspaces(ctx context.Context, config *r
 			return gcerrors.Wrap(err, "Failed to create kcp client for parent workspace %s", parentPath)
 		}
 
-		ws := &kcptenancyv1alpha.Workspace{}
-		ws.APIVersion = kcptenancyv1alpha.SchemeGroupVersion.String()
+		ws := &kcptenancyv1alpha1.Workspace{}
+		ws.APIVersion = kcptenancyv1alpha1.SchemeGroupVersion.String()
 		ws.Kind = "Workspace"
 		ws.Name = workspaceName
-		ws.Spec.Type = &kcptenancyv1alpha.WorkspaceTypeReference{
-			Name: kcptenancyv1alpha.WorkspaceTypeName(wsDecl.Type.Name),
+		ws.Spec.Type = &kcptenancyv1alpha1.WorkspaceTypeReference{
+			Name: kcptenancyv1alpha1.WorkspaceTypeName(wsDecl.Type.Name),
 			Path: wsDecl.Type.Path,
 		}
 

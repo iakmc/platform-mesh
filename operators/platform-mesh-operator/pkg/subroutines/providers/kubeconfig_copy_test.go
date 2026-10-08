@@ -19,6 +19,7 @@ package providers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"testing"
 
@@ -30,6 +31,8 @@ import (
 	"go.platform-mesh.io/golang-commons/logger"
 	"go.platform-mesh.io/platform-mesh-operator/internal/config"
 	"go.platform-mesh.io/platform-mesh-operator/pkg/subroutines/mocks"
+	"go.platform-mesh.io/subroutines/conditions"
+	"go.platform-mesh.io/subroutines/lifecycle"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -37,7 +40,13 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	ctrlruntimeclient "sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	mcreconcile "sigs.k8s.io/multicluster-runtime/pkg/reconcile"
 )
 
 var secretKubeconfigData, _ = os.ReadFile("../test/kubeconfig.yaml")
@@ -323,4 +332,213 @@ func (s *KubeconfigCopyTestSuite) TestFinalize_DeleteError() {
 
 	s.Require().Error(err)
 	s.Assert().True(result.IsContinue())
+}
+
+const (
+	remoteRuntimeClusterHost    = "https://runtime.example.com"
+	runtimeKubeconfigSecretName = "runtime-kubeconfig"
+)
+
+var (
+	kcpKubeconfigKey    = types.NamespacedName{Name: "cowboys-kubeconfig", Namespace: "kcp-side-ns"}
+	copiedKubeconfigKey = types.NamespacedName{Name: "cowboys-provider-kubeconfig", Namespace: "providers-wildwest-ns"}
+)
+
+type copyTarget int
+
+const (
+	toLocalCluster copyTarget = iota
+	toRemoteCluster
+)
+
+type fakeKcpHelper struct {
+	workspaces map[string]ctrlruntimeclient.Client
+}
+
+func (h fakeKcpHelper) NewKcpClient(_ *rest.Config, path string) (ctrlruntimeclient.Client, error) {
+	cl, ok := h.workspaces[path]
+	if !ok {
+		return nil, fmt.Errorf("no kcp workspace %q", path)
+	}
+	return cl, nil
+}
+
+func fakeNewClient(
+	clusters map[string]ctrlruntimeclient.Client,
+) func(*rest.Config, ctrlruntimeclient.Options) (ctrlruntimeclient.Client, error) {
+	return func(cfg *rest.Config, _ ctrlruntimeclient.Options) (ctrlruntimeclient.Client, error) {
+		cl, ok := clusters[cfg.Host]
+		if !ok {
+			return nil, fmt.Errorf("no cluster at %s", cfg.Host)
+		}
+		return cl, nil
+	}
+}
+
+type kubeconfigCopyEnv struct {
+	local           ctrlruntimeclient.Client
+	runtimeCluster  ctrlruntimeclient.Client
+	managedProvider *pmprovidersv1alpha1.ManagedProvider
+	reconcile       func() error
+}
+
+func (e kubeconfigCopyEnv) getManagedProvider(ctx context.Context) error {
+	return e.local.Get(ctx, ctrlruntimeclient.ObjectKeyFromObject(e.managedProvider), &pmprovidersv1alpha1.ManagedProvider{})
+}
+
+func (e kubeconfigCopyEnv) getCopiedKubeconfig(ctx context.Context) error {
+	return e.runtimeCluster.Get(ctx, copiedKubeconfigKey, &corev1.Secret{})
+}
+
+func (s *KubeconfigCopyTestSuite) reconcileUntilCopied(ctx context.Context, target copyTarget) kubeconfigCopyEnv {
+	managedProvider := s.newManagedProvider()
+	if target == toRemoteCluster {
+		managedProvider.Spec.RuntimeKubeconfigSecretName = runtimeKubeconfigSecretName
+	}
+
+	local := s.newFakeClient(managedProvider, kcpAdminSecret(), s.runtimeKubeconfigSecret(managedProvider.Namespace))
+	kcpWorkspace := s.newFakeClient(providerWithKubeconfigRef(), kcpKubeconfigSecret())
+	remoteClient := s.newFakeClient()
+
+	sub := NewKubeconfigCopySubroutine(local, fakeKcpHelper{workspaces: map[string]ctrlruntimeclient.Client{
+		"root:providers:system": kcpWorkspace,
+	}}, &s.operatorCfg, "https://kcp.api.example.com")
+	sub.newClient = fakeNewClient(map[string]ctrlruntimeclient.Client{
+		remoteRuntimeClusterHost: remoteClient,
+	})
+
+	env := kubeconfigCopyEnv{
+		local:           local,
+		runtimeCluster:  local,
+		managedProvider: managedProvider,
+		reconcile:       doReconcileFn(ctx, local, managedProvider, sub),
+	}
+	if target == toRemoteCluster {
+		env.runtimeCluster = remoteClient
+	}
+
+	s.Require().NoError(env.reconcile(), "reconcile adding the finalizer")
+	s.Require().NoError(env.reconcile(), "reconcile copying the kubeconfig")
+	s.Require().NoError(env.getCopiedKubeconfig(ctx), "kubeconfig not copied to the runtime cluster")
+	return env
+}
+
+// doReconcileFn returns one reconcile run over the ManagedProvider through the lifecycle manager.
+func doReconcileFn(ctx context.Context, cl ctrlruntimeclient.Client, managedProvider *pmprovidersv1alpha1.ManagedProvider, sub *KubeconfigCopySubroutine) func() error {
+	lifecycleManager := lifecycle.New(&fakeManager{client: cl}, "ManagedProviderReconciler", func() ctrlruntimeclient.Object {
+		return &pmprovidersv1alpha1.ManagedProvider{}
+	}, sub).WithConditions(conditions.NewManager())
+	req := mcreconcile.Request{Request: reconcile.Request{NamespacedName: ctrlruntimeclient.ObjectKeyFromObject(managedProvider)}}
+	return func() error {
+		_, err := lifecycleManager.Reconcile(ctx, req)
+		return err
+	}
+}
+
+func (s *KubeconfigCopyTestSuite) newFakeClient(objs ...ctrlruntimeclient.Object) ctrlruntimeclient.Client {
+	scheme := runtime.NewScheme()
+	s.Require().NoError(corev1.AddToScheme(scheme))
+	s.Require().NoError(pmprovidersv1alpha1.AddToScheme(scheme))
+	return fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&pmprovidersv1alpha1.ManagedProvider{}).
+		WithObjects(objs...).
+		Build()
+}
+
+func kcpAdminSecret() *corev1.Secret {
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "kcp-admin", Namespace: "platform-mesh-system"},
+		Data:       map[string][]byte{"ca.crt": []byte("ca"), "tls.crt": []byte("cert"), "tls.key": []byte("key")},
+	}
+}
+
+func (s *KubeconfigCopyTestSuite) runtimeKubeconfigSecret(namespace string) *corev1.Secret {
+	cfg := clientcmdapi.NewConfig()
+	cfg.Clusters["runtime"] = &clientcmdapi.Cluster{Server: remoteRuntimeClusterHost}
+	cfg.AuthInfos["runtime"] = &clientcmdapi.AuthInfo{Token: "runtime-token"}
+	cfg.Contexts["runtime"] = &clientcmdapi.Context{Cluster: "runtime", AuthInfo: "runtime"}
+	cfg.CurrentContext = "runtime"
+	kubeconfig, err := clientcmd.Write(*cfg)
+	s.Require().NoError(err)
+
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: runtimeKubeconfigSecretName, Namespace: namespace},
+		Data:       map[string][]byte{"kubeconfig": kubeconfig},
+	}
+}
+
+func providerWithKubeconfigRef() *pmprovidersv1alpha1.Provider {
+	return &pmprovidersv1alpha1.Provider{
+		ObjectMeta: metav1.ObjectMeta{Name: "cowboys"},
+		Spec: pmprovidersv1alpha1.ProviderSpec{
+			ProviderKubeconfigSecret: &pmprovidersv1alpha1.KubeconfigSecretSpec{
+				Name: copiedKubeconfigKey.Name, Namespace: copiedKubeconfigKey.Namespace, Key: "kubeconfig",
+			},
+		},
+		Status: pmprovidersv1alpha1.ProviderStatus{
+			ProviderKubeconfigSecretRef: &corev1.SecretReference{Name: kcpKubeconfigKey.Name, Namespace: kcpKubeconfigKey.Namespace},
+		},
+	}
+}
+
+func kcpKubeconfigSecret() *corev1.Secret {
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: kcpKubeconfigKey.Name, Namespace: kcpKubeconfigKey.Namespace},
+		Data:       map[string][]byte{"kubeconfig": []byte("provider workspace kubeconfig")},
+	}
+}
+
+func (s *KubeconfigCopyTestSuite) TestDelete_RemovesCopiedKubeconfig() {
+	s.Run("local runtime cluster", func() {
+		s.Run("copy removed", func() {
+			ctx := s.newCtx()
+			env := s.reconcileUntilCopied(ctx, toLocalCluster)
+
+			s.Require().NoError(env.local.Delete(ctx, env.managedProvider))
+			s.Require().NoError(env.reconcile())
+
+			s.Assert().True(apierrors.IsNotFound(env.getManagedProvider(ctx)), "ManagedProvider not deleted")
+			s.Assert().True(apierrors.IsNotFound(env.getCopiedKubeconfig(ctx)), "copied kubeconfig left on the runtime cluster")
+		})
+	})
+
+	s.Run("remote runtime cluster", func() {
+		s.Run("copy removed", func() {
+			ctx := s.newCtx()
+			env := s.reconcileUntilCopied(ctx, toRemoteCluster)
+
+			s.Require().NoError(env.local.Delete(ctx, env.managedProvider))
+			s.Require().NoError(env.reconcile())
+
+			s.Assert().True(apierrors.IsNotFound(env.getManagedProvider(ctx)), "ManagedProvider not deleted")
+			s.Assert().True(apierrors.IsNotFound(env.getCopiedKubeconfig(ctx)), "copied kubeconfig left on the runtime cluster")
+		})
+
+		s.Run("waits while the runtime kubeconfig is missing", func() {
+			ctx := s.newCtx()
+			env := s.reconcileUntilCopied(ctx, toRemoteCluster)
+			s.Require().NoError(env.local.Delete(ctx, s.runtimeKubeconfigSecret(env.managedProvider.Namespace)))
+
+			s.Require().NoError(env.local.Delete(ctx, env.managedProvider))
+			s.Require().Error(env.reconcile(), "deletion must wait until the runtime kubeconfig is restored")
+
+			s.Assert().NoError(env.getManagedProvider(ctx), "ManagedProvider deleted without kubeconfig cleanup")
+			s.Assert().NoError(env.getCopiedKubeconfig(ctx), "copied kubeconfig gone from the runtime cluster")
+		})
+
+		s.Run("waits while the runtime kubeconfig is unusable", func() {
+			ctx := s.newCtx()
+			env := s.reconcileUntilCopied(ctx, toRemoteCluster)
+			unusable := s.runtimeKubeconfigSecret(env.managedProvider.Namespace)
+			unusable.Data = nil
+			s.Require().NoError(env.local.Update(ctx, unusable))
+
+			s.Require().NoError(env.local.Delete(ctx, env.managedProvider))
+			s.Require().Error(env.reconcile(), "deletion must wait until the runtime kubeconfig is fixed")
+
+			s.Assert().NoError(env.getManagedProvider(ctx), "ManagedProvider deleted without kubeconfig cleanup")
+			s.Assert().NoError(env.getCopiedKubeconfig(ctx), "copied kubeconfig gone from the runtime cluster")
+		})
+	})
 }

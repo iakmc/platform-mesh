@@ -32,6 +32,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	controllerruntime "sigs.k8s.io/controller-runtime"
 	ctrlruntimeclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -51,6 +52,9 @@ type KubeconfigCopySubroutine struct {
 	kcpHelper   pmsubs.KcpHelper
 	operatorCfg *config.OperatorConfig
 	kcpUrl      string
+
+	// newClient creates a new API client from the provided config.
+	newClient func(*rest.Config, ctrlruntimeclient.Options) (ctrlruntimeclient.Client, error)
 }
 
 func NewKubeconfigCopySubroutine(cl ctrlruntimeclient.Client, kcpHelper pmsubs.KcpHelper, operatorCfg *config.OperatorConfig, kcpUrl string) *KubeconfigCopySubroutine {
@@ -59,6 +63,7 @@ func NewKubeconfigCopySubroutine(cl ctrlruntimeclient.Client, kcpHelper pmsubs.K
 		kcpHelper:   kcpHelper,
 		operatorCfg: operatorCfg,
 		kcpUrl:      kcpUrl,
+		newClient:   ctrlruntimeclient.New,
 	}
 }
 
@@ -93,7 +98,7 @@ func (r *KubeconfigCopySubroutine) newRuntimeClusterClient(ctx context.Context, 
 	}
 
 	// And finally create the client.
-	cl, err := ctrlruntimeclient.New(config, ctrlruntimeclient.Options{
+	cl, err := r.newClient(config, ctrlruntimeclient.Options{
 		Scheme: r.client.Scheme(),
 	})
 	if err != nil {
@@ -203,13 +208,18 @@ func (r *KubeconfigCopySubroutine) Finalize(ctx context.Context, obj ctrlruntime
 
 	inst.Status.Phase = pmprovidersv1alpha1.ManagedProviderPhaseDeleting
 
+	runtimeClusterClient, err := r.newRuntimeClusterClient(ctx, inst)
+	if err != nil {
+		return subroutines.OK(), err
+	}
+
 	secret := corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      inst.Status.ProviderKubeconfigSecretRef.Name,
-			Namespace: inst.Namespace,
+			Namespace: inst.Status.ProviderKubeconfigSecretRef.Namespace,
 		},
 	}
-	if err := ctrlruntimeclient.IgnoreNotFound(r.client.Delete(ctx, &secret)); err != nil {
+	if err := ctrlruntimeclient.IgnoreNotFound(runtimeClusterClient.Delete(ctx, &secret)); err != nil {
 		return subroutines.OK(), gcerrors.Wrap(err, "delete %T %s", secret, secret.GetName())
 	}
 

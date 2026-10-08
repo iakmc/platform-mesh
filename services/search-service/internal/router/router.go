@@ -59,6 +59,10 @@ func CreateRouter(svc SearchService, mws []func(http.Handler) http.Handler) *chi
 		w.WriteHeader(http.StatusOK)
 	})
 
+	router.Options("/rest/v1/search", corsPreflightHandler)
+	router.Options("/rest/v1/search/resources", corsPreflightHandler)
+	router.Options("/rest/v1/search/filter-values", corsPreflightHandler)
+
 	router.With(mws...).Get("/rest/v1/search", func(w http.ResponseWriter, r *http.Request) {
 		rc, err := appcontext.GetRequestContext(r.Context())
 		if err != nil {
@@ -342,6 +346,10 @@ func problemFor(err error) httperr.Problem {
 	default:
 		return httperr.Internal
 	}
+}
+
+func corsPreflightHandler(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusOK)
 }
 
 // reason drops the sentinel prefix, so "invalid request: filters require a

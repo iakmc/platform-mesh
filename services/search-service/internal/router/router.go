@@ -27,6 +27,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/cors"
 
 	"go.platform-mesh.io/golang-commons/logger"
 	appcontext "go.platform-mesh.io/search-service/internal/context"
@@ -45,6 +46,8 @@ type SearchService interface {
 func CreateRouter(svc SearchService, mws []func(http.Handler) http.Handler) *chi.Mux {
 	router := chi.NewRouter()
 
+	router.Use(cors.AllowAll().Handler)
+
 	router.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		httperr.Write(w, r, httperr.NotFound)
 	})
@@ -58,10 +61,6 @@ func CreateRouter(svc SearchService, mws []func(http.Handler) http.Handler) *chi
 	router.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-
-	router.Options("/rest/v1/search", corsPreflightHandler)
-	router.Options("/rest/v1/search/resources", corsPreflightHandler)
-	router.Options("/rest/v1/search/filter-values", corsPreflightHandler)
 
 	router.With(mws...).Get("/rest/v1/search", func(w http.ResponseWriter, r *http.Request) {
 		rc, err := appcontext.GetRequestContext(r.Context())
@@ -346,10 +345,6 @@ func problemFor(err error) httperr.Problem {
 	default:
 		return httperr.Internal
 	}
-}
-
-func corsPreflightHandler(w http.ResponseWriter, _ *http.Request) {
-	w.WriteHeader(http.StatusOK)
 }
 
 // reason drops the sentinel prefix, so "invalid request: filters require a

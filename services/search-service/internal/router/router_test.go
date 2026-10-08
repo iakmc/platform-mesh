@@ -652,7 +652,10 @@ func TestCORSPreflightReturns200(t *testing.T) {
 	for _, path := range paths {
 		t.Run(path, func(t *testing.T) {
 			rr := httptest.NewRecorder()
-			r.ServeHTTP(rr, httptest.NewRequest(http.MethodOptions, path, nil))
+			req := httptest.NewRequest(http.MethodOptions, path, nil)
+			req.Header.Set("Origin", "https://example.com")
+			req.Header.Set("Access-Control-Request-Method", "GET")
+			r.ServeHTTP(rr, req)
 			if rr.Code != http.StatusOK {
 				t.Fatalf("expected 200 for OPTIONS %s, got %d", path, rr.Code)
 			}

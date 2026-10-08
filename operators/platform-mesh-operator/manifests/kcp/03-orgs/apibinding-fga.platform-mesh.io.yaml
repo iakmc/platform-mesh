@@ -15,9 +15,9 @@
 apiVersion: apis.kcp.io/v1alpha2
 kind: APIBinding
 metadata:
-  name: orgs.core.platform-mesh.io
+  name: fga.platform-mesh.io
 spec:
   reference:
     export:
-      name: orgs.core.platform-mesh.io
+      name: fga.platform-mesh.io
       path: root:platform-mesh-system

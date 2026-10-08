@@ -77,7 +77,7 @@ func NewMigrator(steps ...Migration) *Migrator {
 // currently ships.
 func Default() *Migrator {
 	return NewMigrator(
-		orgsAPIExportSplitMigration{},
+		fgaAPIExportSplitMigration{},
 		providerAPIExportSplitMigration{},
 	)
 }
@@ -166,15 +166,15 @@ func applyBinding(ctx context.Context, client ctrlruntimeclient.Client, name, ex
 		ctrlruntimeclient.FieldOwner(fieldManagerKcpSetup), ctrlruntimeclient.ForceOwnership)
 }
 
-// orgsAPIExportSplitMigration swaps root:orgs off the pre-split core.platform-mesh.io
-// binding onto orgs.core.platform-mesh.io, which shares identity so kcp adopts automatically.
+// fgaAPIExportSplitMigration swaps root:orgs off the pre-split core.platform-mesh.io
+// binding onto fga.platform-mesh.io, which shares identity so kcp adopts automatically.
 // Safe to remove once every environment has reconciled past this change (#171/#47).
-type orgsAPIExportSplitMigration struct{}
+type fgaAPIExportSplitMigration struct{}
 
-func (orgsAPIExportSplitMigration) Name() string { return "orgs-apiexport-split" }
+func (fgaAPIExportSplitMigration) Name() string { return "fga-apiexport-split" }
 
-func (orgsAPIExportSplitMigration) Migrate(ctx context.Context, deps Deps) error {
-	log := logger.LoadLoggerFromContext(ctx).ChildLogger("migration", "orgs-apiexport-split")
+func (fgaAPIExportSplitMigration) Migrate(ctx context.Context, deps Deps) error {
+	log := logger.LoadLoggerFromContext(ctx).ChildLogger("migration", "fga-apiexport-split")
 
 	orgsClient, err := deps.KcpHelper.NewKcpClient(deps.Config, "root:orgs")
 	if err != nil {
@@ -194,7 +194,7 @@ func (orgsAPIExportSplitMigration) Migrate(ctx context.Context, deps Deps) error
 	}
 
 	log.Info().Str("binding", legacyBinding.GetName()).
-		Msg("root:orgs still on pre-split core.platform-mesh.io binding, migrating to orgs.core.platform-mesh.io")
+		Msg("root:orgs still on pre-split core.platform-mesh.io binding, migrating to fga.platform-mesh.io")
 
 	// The fresh successor bindings are applied by createKcpResources before migrations run, so
 	// they're already in place by now.
@@ -206,7 +206,7 @@ func (orgsAPIExportSplitMigration) Migrate(ctx context.Context, deps Deps) error
 		return gcerrors.Wrap(err, "Failed to migrate legacy core.platform-mesh.io binding in root:orgs")
 	}
 
-	log.Info().Msg("legacy core.platform-mesh.io binding removed from root:orgs, resources adopted by orgs.core.platform-mesh.io")
+	log.Info().Msg("legacy core.platform-mesh.io binding removed from root:orgs, resources adopted by fga.platform-mesh.io")
 	return nil
 }
 
@@ -217,8 +217,8 @@ func uiExportPath(_ *pmcorev1alpha1.PlatformMesh) (string, bool) {
 }
 
 // providerAPIExportSplitMigration does for provider workspaces what
-// orgsAPIExportSplitMigration does for root:orgs (trimmed core.platform-mesh.io + ui.platform-mesh.io).
-// Safe to remove under the same condition as orgsAPIExportSplitMigration above.
+// fgaAPIExportSplitMigration does for root:orgs (trimmed core.platform-mesh.io + ui.platform-mesh.io).
+// Safe to remove under the same condition as fgaAPIExportSplitMigration above.
 type providerAPIExportSplitMigration struct{}
 
 func (providerAPIExportSplitMigration) Name() string { return "provider-apiexport-split" }

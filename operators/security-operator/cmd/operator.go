@@ -65,7 +65,7 @@ var (
 
 const (
 	coreProviderName = "core-platform-mesh-io"
-	orgsProviderName = "orgs-core-platform-mesh-io"
+	fgaProviderName = "fga-platform-mesh-io"
 	// providerSeparator must match mcmultiprovider.Options.Separator below.
 	providerSeparator = "#"
 )
@@ -146,14 +146,14 @@ var operatorCmd = &cobra.Command{
 			return err
 		}
 
-		// Store and AuthorizationModel now live under orgs.core.platform-mesh.io,
+		// Store and AuthorizationModel now live under fga.platform-mesh.io,
 		// not core.platform-mesh.io. Second named provider lets those
 		// controllers engage only with clusters visible through that export.
-		orgsProvider, err := pathaware.New(restCfg, operatorCfg.APIExportEndpointSlices.OrgsCorePlatformMeshIO, apiexport.Options{
+		fgaProvider, err := pathaware.New(restCfg, operatorCfg.APIExportEndpointSlices.FgaPlatformMeshIO, apiexport.Options{
 			Scheme: mgrOpts.Scheme,
 		})
 		if err != nil {
-			setupLog.Error(err, "unable to construct orgs cluster provider")
+			setupLog.Error(err, "unable to construct fga cluster provider")
 			return err
 		}
 
@@ -169,8 +169,8 @@ var operatorCmd = &cobra.Command{
 			setupLog.Error(err, "unable to add core cluster provider")
 			return err
 		}
-		if err := multiProvider.AddProvider(orgsProviderName, orgsProvider); err != nil {
-			setupLog.Error(err, "unable to add orgs cluster provider")
+		if err := multiProvider.AddProvider(fgaProviderName, fgaProvider); err != nil {
+			setupLog.Error(err, "unable to add fga cluster provider")
 			return err
 		}
 
@@ -196,16 +196,16 @@ var operatorCmd = &cobra.Command{
 			log.Error().Err(err).Msg("Failed to create in cluster client")
 			return err
 		}
-		providerLister := iclient.NewProviderLister(orgsProvider.Provider.Provider)
-		orgsEngageOpts := controller.WithClustersFromNamedProvider(orgsProviderName, providerSeparator)
+		providerLister := iclient.NewProviderLister(fgaProvider.Provider.Provider)
+		fgaEngageOpts := controller.WithClustersFromNamedProvider(fgaProviderName, providerSeparator)
 
-		if err = controller.NewStoreReconciler(ctx, log, fga, mgr, &operatorCfg, providerLister, orgsEngageOpts).
+		if err = controller.NewStoreReconciler(ctx, log, fga, mgr, &operatorCfg, providerLister, fgaEngageOpts).
 			SetupWithManager(mgr, defaultCfg); err != nil {
 			log.Error().Err(err).Str("controller", "store").Msg("unable to create controller")
 			return err
 		}
 		if err = controller.
-			NewAuthorizationModelReconciler(ctx, log, fga, mgr, orgsEngageOpts).
+			NewAuthorizationModelReconciler(ctx, log, fga, mgr, fgaEngageOpts).
 			SetupWithManager(mgr, defaultCfg); err != nil {
 			log.Error().Err(err).Str("controller", "authorizationmodel").Msg("unable to create controller")
 			return err

@@ -77,7 +77,7 @@ func legacyCoreBinding() unstructured.Unstructured {
 	return b
 }
 
-func (s *MigrationTestSuite) Test_orgsAPIExportSplitMigration_NoLegacyBinding() {
+func (s *MigrationTestSuite) Test_fgaAPIExportSplitMigration_NoLegacyBinding() {
 	ctx := context.WithValue(context.Background(), keys.LoggerCtxKey, s.log)
 
 	orgsClientMock := new(mocks.Client)
@@ -88,30 +88,30 @@ func (s *MigrationTestSuite) Test_orgsAPIExportSplitMigration_NoLegacyBinding() 
 			list := ol.(*unstructured.UnstructuredList)
 			// A binding to a different/already-trimmed export: nothing to migrate.
 			b := unstructured.Unstructured{}
-			b.SetName("orgs.core.platform-mesh.io")
-			_ = unstructured.SetNestedField(b.Object, "orgs.core.platform-mesh.io", "spec", "reference", "export", "name")
+			b.SetName("fga.platform-mesh.io")
+			_ = unstructured.SetNestedField(b.Object, "fga.platform-mesh.io", "spec", "reference", "export", "name")
 			list.Items = []unstructured.Unstructured{b}
 			return nil
 		})
 
-	err := orgsAPIExportSplitMigration{}.Migrate(ctx, Deps{KcpHelper: s.helperMock, Config: &rest.Config{}})
+	err := fgaAPIExportSplitMigration{}.Migrate(ctx, Deps{KcpHelper: s.helperMock, Config: &rest.Config{}})
 	s.Assert().NoError(err)
 	orgsClientMock.AssertNotCalled(s.T(), "Delete", mock.Anything, mock.Anything)
 	orgsClientMock.AssertNotCalled(s.T(), "Patch", mock.Anything, mock.Anything, mock.Anything)
 }
 
-func (s *MigrationTestSuite) Test_orgsAPIExportSplitMigration_WorkspaceNotFound() {
+func (s *MigrationTestSuite) Test_fgaAPIExportSplitMigration_WorkspaceNotFound() {
 	ctx := context.WithValue(context.Background(), keys.LoggerCtxKey, s.log)
 
 	orgsClientMock := new(mocks.Client)
 	s.helperMock.EXPECT().NewKcpClient(mock.Anything, "root:orgs").Return(orgsClientMock, nil)
 	orgsClientMock.EXPECT().List(mock.Anything, mock.Anything).Return(errors.New("workspace not found"))
 
-	err := orgsAPIExportSplitMigration{}.Migrate(ctx, Deps{KcpHelper: s.helperMock, Config: &rest.Config{}})
+	err := fgaAPIExportSplitMigration{}.Migrate(ctx, Deps{KcpHelper: s.helperMock, Config: &rest.Config{}})
 	s.Assert().NoError(err)
 }
 
-func (s *MigrationTestSuite) Test_orgsAPIExportSplitMigration_MigratesLegacyBinding() {
+func (s *MigrationTestSuite) Test_fgaAPIExportSplitMigration_MigratesLegacyBinding() {
 	ctx := context.WithValue(context.Background(), keys.LoggerCtxKey, s.log)
 
 	orgsClientMock := new(mocks.Client)
@@ -126,7 +126,7 @@ func (s *MigrationTestSuite) Test_orgsAPIExportSplitMigration_MigratesLegacyBind
 			return nil
 		}).Once()
 
-	// deletionPolicy=WaitForSuccessor patch, then delete; orgs.core.platform-mesh.io adopts
+	// deletionPolicy=WaitForSuccessor patch, then delete; fga.platform-mesh.io adopts
 	// Store/AuthorizationModel server-side, so no object listing or finalizer stripping is needed.
 	var patchedPolicy []byte
 	orgsClientMock.EXPECT().Patch(mock.Anything, mock.Anything, mock.Anything).RunAndReturn(
@@ -138,7 +138,7 @@ func (s *MigrationTestSuite) Test_orgsAPIExportSplitMigration_MigratesLegacyBind
 	orgsClientMock.EXPECT().Get(mock.Anything, types.NamespacedName{Name: binding.GetName()}, mock.Anything).
 		Return(apierrors.NewNotFound(schema.GroupResource{Group: "apis.kcp.io", Resource: "apibindings"}, binding.GetName()))
 
-	err := orgsAPIExportSplitMigration{}.Migrate(ctx, Deps{KcpHelper: s.helperMock, Config: &rest.Config{}})
+	err := fgaAPIExportSplitMigration{}.Migrate(ctx, Deps{KcpHelper: s.helperMock, Config: &rest.Config{}})
 	s.Assert().NoError(err)
 	s.Assert().JSONEq(`{"spec":{"deletionPolicy":"WaitForSuccessor"}}`, string(patchedPolicy))
 }

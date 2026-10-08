@@ -15,7 +15,7 @@
 apiVersion: apis.kcp.io/v1alpha2
 kind: APIExport
 metadata:
-  name: orgs.core.platform-mesh.io
+  name: fga.platform-mesh.io
 spec:
   # Shares core.platform-mesh.io's identity so kcp (>=v0.33.0) adopts stores/authorizationmodels from the legacy binding.
   identity:

@@ -588,7 +588,8 @@ func (s *KindTestSuite) addFrontProxyCertificateSAN(ctx context.Context, dnsName
 	frontProxy.SetAPIVersion(fpGVK)
 	frontProxy.SetKind("FrontProxy")
 
-	err := wait.PollUntilContextTimeout(ctx, 5*time.Second, 5*time.Minute, true, func(ctx context.Context) (bool, error) {
+	// FrontProxy exists only after the infra HelmRelease and kcp-operator are up, same wait as TestPlatformMesh.
+	err := wait.PollUntilContextTimeout(ctx, 5*time.Second, 30*time.Minute, true, func(ctx context.Context) (bool, error) {
 		getErr := s.client.Get(ctx, ctrlruntimeclient.ObjectKey{Name: "frontproxy", Namespace: "platform-mesh-system"}, frontProxy)
 		return getErr == nil, nil
 	})

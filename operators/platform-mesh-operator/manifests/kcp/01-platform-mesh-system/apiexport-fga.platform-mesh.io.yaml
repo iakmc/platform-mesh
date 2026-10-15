@@ -17,17 +17,12 @@ kind: APIExport
 metadata:
   name: fga.platform-mesh.io
 spec:
-  # Shares core.platform-mesh.io's identity so kcp (>=v0.33.0) adopts stores/authorizationmodels from the legacy binding.
+  # Shares core.platform-mesh.io's identity so kcp (>=v0.33.0) adopts stores from the legacy binding.
   identity:
     secretRef:
       namespace: kcp-system
       name: core.platform-mesh.io
   resources:
-  - group: core.platform-mesh.io
-    name: authorizationmodels
-    schema: v260112-5925c7e.authorizationmodels.core.platform-mesh.io
-    storage:
-      crd: {}
   - group: core.platform-mesh.io
     name: stores
     schema: v250718-a64f278.stores.core.platform-mesh.io

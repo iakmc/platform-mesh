@@ -217,8 +217,8 @@ func (s *MigrationTestSuite) Test_migrateLegacyProviderBinding_MigratesWithoutUI
 	// No successor will ever exist, so this deletes outright: no deletionPolicy patch, no wait-for-gone.
 	providerClientMock.EXPECT().Delete(mock.Anything, mock.Anything).Return(nil).Once()
 
-	// Only core.platform-mesh.io should be re-applied, no ui.platform-mesh.io since opt-in is off.
-	providerClientMock.EXPECT().Apply(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+	// provider-fga.platform-mesh.io and core.platform-mesh.io, no ui.platform-mesh.io since opt-in is off.
+	providerClientMock.EXPECT().Apply(mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Twice()
 
 	err := migrateLegacyProviderBinding(ctx, s.helperMock, &rest.Config{}, "wildwest", "", false)
 	s.Assert().NoError(err)
@@ -252,7 +252,7 @@ func (s *MigrationTestSuite) Test_migrateLegacyProviderBinding_MigratesWithUIOpt
 	providerClientMock.EXPECT().Get(mock.Anything, types.NamespacedName{Name: binding.GetName()}, mock.Anything).
 		Return(apierrors.NewNotFound(schema.GroupResource{Group: "apis.kcp.io", Resource: "apibindings"}, binding.GetName()))
 
-	// core.platform-mesh.io binding and ui.platform-mesh.io binding, nothing else.
+	// provider-fga.platform-mesh.io, core.platform-mesh.io and ui.platform-mesh.io bindings, nothing else.
 	var appliedNames []string
 	providerClientMock.EXPECT().Apply(mock.Anything, mock.Anything, mock.Anything, mock.Anything).RunAndReturn(
 		func(ctx context.Context, obj runtime.ApplyConfiguration, opts ...ctrlruntimeclient.ApplyOption) error {
@@ -260,10 +260,107 @@ func (s *MigrationTestSuite) Test_migrateLegacyProviderBinding_MigratesWithUIOpt
 				appliedNames = append(appliedNames, named.GetName())
 			}
 			return nil
-		}).Twice()
+		}).Times(3)
 
 	err := migrateLegacyProviderBinding(ctx, s.helperMock, &rest.Config{}, "wildwest", "root:platform-mesh-system", true)
 	s.Assert().NoError(err)
 	s.Assert().JSONEq(`{"spec":{"deletionPolicy":"WaitForSuccessor"}}`, string(patchedPolicy))
-	s.Assert().ElementsMatch([]string{"core.platform-mesh.io", "ui.platform-mesh.io"}, appliedNames)
+	s.Assert().ElementsMatch([]string{"provider-fga.platform-mesh.io", "core.platform-mesh.io", "ui.platform-mesh.io"}, appliedNames)
+}
+
+func providerBindingTo(export string) unstructured.Unstructured {
+	b := unstructured.Unstructured{}
+	b.SetGroupVersionKind(schema.GroupVersionKind{Group: "apis.kcp.io", Version: "v1alpha2", Kind: "APIBinding"})
+	b.SetName(export)
+	_ = unstructured.SetNestedField(b.Object, export, "spec", "reference", "export", "name")
+	return b
+}
+
+func (s *MigrationTestSuite) Test_migrateLegacyProviderBinding_AddsProviderFgaToMigratedProvider() {
+	ctx := context.WithValue(context.Background(), keys.LoggerCtxKey, s.log)
+
+	providerClientMock := new(mocks.Client)
+	s.helperMock.EXPECT().NewKcpClient(mock.Anything, "root:providers:wildwest").Return(providerClientMock, nil)
+
+	providerClientMock.EXPECT().List(mock.Anything, mock.Anything).RunAndReturn(
+		func(ctx context.Context, ol ctrlruntimeclient.ObjectList, lo ...ctrlruntimeclient.ListOption) error {
+			list := ol.(*unstructured.UnstructuredList)
+			list.Items = []unstructured.Unstructured{providerBindingTo("core.platform-mesh.io"), providerBindingTo("ui.platform-mesh.io")}
+			return nil
+		}).Once()
+
+	var appliedNames []string
+	providerClientMock.EXPECT().Apply(mock.Anything, mock.Anything, mock.Anything, mock.Anything).RunAndReturn(
+		func(ctx context.Context, obj runtime.ApplyConfiguration, opts ...ctrlruntimeclient.ApplyOption) error {
+			if named, ok := obj.(interface{ GetName() string }); ok {
+				appliedNames = append(appliedNames, named.GetName())
+			}
+			return nil
+		}).Once()
+
+	err := migrateLegacyProviderBinding(ctx, s.helperMock, &rest.Config{}, "wildwest", "root:platform-mesh-system", true)
+	s.Assert().NoError(err)
+	s.Assert().Equal([]string{"provider-fga.platform-mesh.io"}, appliedNames)
+	providerClientMock.AssertNotCalled(s.T(), "Delete", mock.Anything, mock.Anything)
+}
+
+func (s *MigrationTestSuite) Test_migrateLegacyProviderBinding_LeavesFullyMigratedProviderAlone() {
+	ctx := context.WithValue(context.Background(), keys.LoggerCtxKey, s.log)
+
+	providerClientMock := new(mocks.Client)
+	s.helperMock.EXPECT().NewKcpClient(mock.Anything, "root:providers:wildwest").Return(providerClientMock, nil)
+
+	providerClientMock.EXPECT().List(mock.Anything, mock.Anything).RunAndReturn(
+		func(ctx context.Context, ol ctrlruntimeclient.ObjectList, lo ...ctrlruntimeclient.ListOption) error {
+			list := ol.(*unstructured.UnstructuredList)
+			list.Items = []unstructured.Unstructured{
+				providerBindingTo("core.platform-mesh.io"), providerBindingTo("ui.platform-mesh.io"), providerBindingTo("provider-fga.platform-mesh.io"),
+			}
+			return nil
+		}).Once()
+
+	err := migrateLegacyProviderBinding(ctx, s.helperMock, &rest.Config{}, "wildwest", "root:platform-mesh-system", true)
+	s.Assert().NoError(err)
+	providerClientMock.AssertNotCalled(s.T(), "Apply", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	providerClientMock.AssertNotCalled(s.T(), "Delete", mock.Anything, mock.Anything)
+}
+
+func (s *MigrationTestSuite) Test_migrateLegacyProviderBinding_KeepsAcceptedClaimsOnCoreBinding() {
+	ctx := context.WithValue(context.Background(), keys.LoggerCtxKey, s.log)
+
+	providerClientMock := new(mocks.Client)
+	s.helperMock.EXPECT().NewKcpClient(mock.Anything, "root:providers:wildwest").Return(providerClientMock, nil)
+
+	binding := legacyProviderCoreBinding()
+	claims := []any{map[string]any{
+		"group": "apis.kcp.io", "resource": "apiexports", "state": "Accepted",
+		"selector": map[string]any{"matchAll": true}, "verbs": []any{"*"},
+	}}
+	_ = unstructured.SetNestedSlice(binding.Object, claims, "spec", "permissionClaims")
+
+	providerClientMock.EXPECT().List(mock.Anything, mock.Anything).RunAndReturn(
+		func(ctx context.Context, ol ctrlruntimeclient.ObjectList, lo ...ctrlruntimeclient.ListOption) error {
+			ol.(*unstructured.UnstructuredList).Items = []unstructured.Unstructured{binding}
+			return nil
+		}).Once()
+	providerClientMock.EXPECT().Patch(mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+	providerClientMock.EXPECT().Delete(mock.Anything, mock.Anything).Return(nil).Once()
+	providerClientMock.EXPECT().Get(mock.Anything, types.NamespacedName{Name: binding.GetName()}, mock.Anything).
+		Return(apierrors.NewNotFound(schema.GroupResource{Group: "apis.kcp.io", Resource: "apibindings"}, binding.GetName()))
+
+	appliedClaims := map[string][]any{}
+	providerClientMock.EXPECT().Apply(mock.Anything, mock.Anything, mock.Anything, mock.Anything).RunAndReturn(
+		func(ctx context.Context, obj runtime.ApplyConfiguration, opts ...ctrlruntimeclient.ApplyOption) error {
+			u, ok := obj.(runtime.Unstructured)
+			s.Require().True(ok)
+			got, _, _ := unstructured.NestedSlice(u.UnstructuredContent(), "spec", "permissionClaims")
+			appliedClaims[u.UnstructuredContent()["metadata"].(map[string]any)["name"].(string)] = got
+			return nil
+		}).Times(3)
+
+	err := migrateLegacyProviderBinding(ctx, s.helperMock, &rest.Config{}, "wildwest", "root:platform-mesh-system", true)
+	s.Assert().NoError(err)
+	s.Assert().Equal(claims, appliedClaims["core.platform-mesh.io"])
+	s.Assert().Empty(appliedClaims["ui.platform-mesh.io"])
+	s.Assert().Empty(appliedClaims["provider-fga.platform-mesh.io"])
 }

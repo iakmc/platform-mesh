@@ -52,14 +52,15 @@ import (
 
 // StoreReconciler reconciles a Store object
 type StoreReconciler struct {
-	fga        openfgav1.OpenFGAServiceClient
-	log        *logger.Logger
-	lifecycle  *lifecycle.Lifecycle
-	ctx        context.Context
-	engageOpts mcbuilder.EngageOptions
+	fga             openfgav1.OpenFGAServiceClient
+	log             *logger.Logger
+	lifecycle       *lifecycle.Lifecycle
+	ctx             context.Context
+	engageOpts      mcbuilder.EngageOptions
+	modelEngageOpts mcbuilder.EngageOptions
 }
 
-func NewStoreReconciler(ctx context.Context, log *logger.Logger, fga openfgav1.OpenFGAServiceClient, mcMgr mcmanager.Manager, cfg *config.Config, lister iclient.Lister, engageOpts mcbuilder.EngageOptions) *StoreReconciler {
+func NewStoreReconciler(ctx context.Context, log *logger.Logger, fga openfgav1.OpenFGAServiceClient, mcMgr mcmanager.Manager, cfg *config.Config, lister iclient.Lister, engageOpts, modelEngageOpts mcbuilder.EngageOptions) *StoreReconciler {
 	lc := lifecycle.New(mcMgr, "StoreReconciler", func() ctrlruntimeclient.Object {
 		return &pmcorev1alpha1.Store{}
 	},
@@ -71,11 +72,12 @@ func NewStoreReconciler(ctx context.Context, log *logger.Logger, fga openfgav1.O
 	).WithConditions(conditions.NewManager())
 
 	return &StoreReconciler{
-		fga:        fga,
-		log:        log,
-		lifecycle:  lc,
-		ctx:        ctx,
-		engageOpts: engageOpts,
+		fga:             fga,
+		log:             log,
+		lifecycle:       lc,
+		ctx:             ctx,
+		engageOpts:      engageOpts,
+		modelEngageOpts: modelEngageOpts,
 	}
 }
 
@@ -117,12 +119,12 @@ func (r *StoreReconciler) SetupWithManager(mgr mcmanager.Manager, cfg *platforme
 									Name: model.Spec.StoreRef.Name,
 								},
 							},
-							ClusterName: multicluster.ClusterName(model.Spec.StoreRef.Cluster),
+							ClusterName: config.StoreClusterName(model.Spec.StoreRef.Cluster),
 						},
 					}
 				})
 			},
 			mcbuilder.WithPredicates(predicate.GenerationChangedPredicate{}),
-			r.engageOpts,
+			r.modelEngageOpts,
 		).Complete(r)
 }

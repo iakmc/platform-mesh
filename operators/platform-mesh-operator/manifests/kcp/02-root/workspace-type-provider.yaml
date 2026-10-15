@@ -24,6 +24,8 @@ spec:
       path: root:platform-mesh-system
     - export: ui.platform-mesh.io
       path: root:platform-mesh-system
+    - export: provider-fga.platform-mesh.io
+      path: root:platform-mesh-system
   limitAllowedParents:
     types:
       - name: providers

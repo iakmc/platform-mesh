@@ -276,6 +276,12 @@ data:
               cluster:
                 # Chart default is 2 instances; one is enough for the e2e.
                 instances: 1
+              # same as helm-charts local-setup, keycloak must match keycloak.operator.db.password
+              roles:
+                keycloak:
+                  password: keycloak-password
+                openfga:
+                  password: openfga-password
             cors:
               enabled: true
             gatewayApi:
@@ -288,17 +294,21 @@ data:
                 - "localhost"
                 - "portal.localhost"
                 - "kcp.api.{{ .baseDomain }}"
-              - ip: "{{ .kcpFrontProxyClusterIP }}"
-                hostnames:
-                - "kcp.localhost"
                 - "root.kcp.localhost"
                 - "nereus.kcp.localhost"
                 - "triton.kcp.localhost"
+              # kcp.localhost is the front-proxy itself, the shard hostnames stay on traefik
+              - ip: "{{ .kcpFrontProxyClusterIP }}"
+                hostnames:
+                - "kcp.localhost"
             keycloak:
               enabled: true
               operator:
                 hostname: https://portal.localhost:8443/keycloak/
                 enabled: true
+                # same as helm-charts local-setup, the infra chart creates keycloak-db-credentials only when this is set
+                db:
+                  password: keycloak-password
                 # Chart default requests 750m / 1Gi; trimmed for the default CI runner.
                 resources:
                   requests:
@@ -653,12 +663,13 @@ data:
                 - "localhost"
                 - "portal.localhost"
                 - "kcp.api.{{ .baseDomain }}"
-              - ip: "{{ .kcpFrontProxyClusterIP }}"
-                hostnames:
-                - "kcp.localhost"
                 - "root.kcp.localhost"
                 - "nereus.kcp.localhost"
                 - "triton.kcp.localhost"
+              # kcp.localhost is the front-proxy itself, the shard hostnames stay on traefik
+              - ip: "{{ .kcpFrontProxyClusterIP }}"
+                hostnames:
+                - "kcp.localhost"
             http:
               protocol: https
             kcp:
@@ -691,14 +702,12 @@ data:
             openfga:
               url: openfga:8081
         security-operator:
-          imageResources:
-          - annotations:
-              repo: oci
-              artifact: image
-              for: security-operator
           syncWave: 4
           enabled: true
           values:
+            # built from this checkout and loaded into kind by the e2e suite
+            image:
+              tag: e2e-local
             deployment:
               resources:
                 requests:

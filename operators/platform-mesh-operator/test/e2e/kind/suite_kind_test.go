@@ -65,13 +65,10 @@ import (
 	mcmanager "sigs.k8s.io/multicluster-runtime/pkg/manager"
 	mcmultiprovider "sigs.k8s.io/multicluster-runtime/providers/multi"
 
-	mcapiexportprovider "github.com/kcp-dev/multicluster-provider/apiexport"
 	kcpapisv1alpha1 "github.com/kcp-dev/sdk/apis/apis/v1alpha1"
 	kcpapisv1alpha2 "github.com/kcp-dev/sdk/apis/apis/v1alpha2"
 	kcptenancyv1alpha1 "github.com/kcp-dev/sdk/apis/tenancy/v1alpha1"
 )
-
-const testWaitForKcpAdminKubeconfigPeriod = time.Second * 15
 
 type KindTestSuite struct {
 	suite.Suite
@@ -130,6 +127,42 @@ func runCommand(name string, args ...string) ([]byte, error) {
 	cmd.Env = env
 
 	return cmd.Output()
+}
+
+// securityOperatorImage must match security-operator values.image in the e2e profile.
+const securityOperatorImage = "ghcr.io/platform-mesh/platform-mesh/security-operator:e2e-local"
+
+// buildSecurityOperatorImage builds security-operator from this checkout, so the e2e
+// runs it from the same commit as the kcp manifests of this operator.
+func (s *KindTestSuite) buildSecurityOperatorImage() error {
+	s.logger.Info().Msg("Building security-operator image in the background...")
+	if _, err := runCommand(s.containerRuntime, "build", "-f", "../../../../../operators/security-operator/Dockerfile", "-t", securityOperatorImage, "../../../../.."); err != nil {
+		return fmt.Errorf("building %s: %w", securityOperatorImage, err)
+	}
+	return nil
+}
+
+// loadSecurityOperatorImage loads the image the same way the operator Taskfiles do.
+func (s *KindTestSuite) loadSecurityOperatorImage() error {
+	if s.containerRuntime == "podman" {
+		tarFile, err := os.CreateTemp("", "security-operator-*.tar")
+		if err != nil {
+			return err
+		}
+		_ = tarFile.Close()
+		defer os.Remove(tarFile.Name()) //nolint:errcheck
+
+		if _, err = runCommand(s.containerRuntime, "save", securityOperatorImage, "-o", tarFile.Name()); err != nil {
+			return fmt.Errorf("saving %s: %w", securityOperatorImage, err)
+		}
+		if _, err = runCommand(kindBinary(), "load", "image-archive", tarFile.Name(), "--name", clusterName); err != nil {
+			return fmt.Errorf("loading %s into kind: %w", securityOperatorImage, err)
+		}
+	} else if _, err := runCommand(kindBinary(), "load", "docker-image", securityOperatorImage, "--name", clusterName); err != nil {
+		return fmt.Errorf("loading %s into kind: %w", securityOperatorImage, err)
+	}
+	s.logger.Info().Msg("security-operator image loaded into kind")
+	return nil
 }
 
 // checkClusterExists checks if a Kind cluster with the given name exists.
@@ -225,7 +258,7 @@ func (s *KindTestSuite) createKindCluster() error {
 		}
 
 		s.logger.Info().Msg("Creating Kind cluster...")
-		if _, err = runCommand(kindBinary(), "create", "cluster", "--config", "../../../kind-config.yaml", "--name", clusterName, "--image=kindest/node:v1.34.11"); err != nil {
+		if _, err = runCommand(kindBinary(), "create", "cluster", "--config", "../../../kind-config.yaml", "--name", clusterName, "--image=kindest/node:v1.33.1"); err != nil {
 			return err
 		}
 	}
@@ -338,7 +371,9 @@ func (s *KindTestSuite) createSecrets(ctx context.Context, dirRootPath []byte) e
 			Namespace: "platform-mesh-system",
 		},
 		Data: map[string][]byte{
-			"secret": []byte("admin"),
+			"username": []byte("keycloak-admin"),
+			"password": []byte("admin"),
+			"secret":   []byte("admin"),
 		},
 		Type: corev1.SecretTypeOpaque,
 	}
@@ -486,10 +521,21 @@ func (s *KindTestSuite) SetupSuite() {
 		s.logger.Error().Err(err).Msg("Failed to detect container runtime")
 		s.T().FailNow()
 	}
+	// security-operator is installed late (syncWave 4), so build it while the rest of the setup runs.
+	imageBuilt := make(chan error, 1)
+	go func() { imageBuilt <- s.buildSecurityOperatorImage() }()
 	if err = s.createKindCluster(); err != nil {
 		s.logger.Error().Err(err).Msg("Failed to create Kind cluster")
 		s.T().FailNow()
 	}
+	imageLoaded := make(chan error, 1)
+	go func() {
+		if buildErr := <-imageBuilt; buildErr != nil {
+			imageLoaded <- buildErr
+			return
+		}
+		imageLoaded <- s.loadSecurityOperatorImage()
+	}()
 	if err = s.InstallCRDs(ctx); err != nil {
 		s.logger.Error().Err(err).Msg("Failed to install CRDs")
 		s.T().FailNow()
@@ -575,6 +621,11 @@ func (s *KindTestSuite) SetupSuite() {
 
 	if err = s.addFrontProxyCertificateSAN(ctx, "root.kcp.localhost"); err != nil {
 		s.logger.Error().Err(err).Msg("Failed to add front-proxy certificate SAN")
+		s.T().FailNow()
+	}
+
+	if err = <-imageLoaded; err != nil {
+		s.logger.Error().Err(err).Msg("Failed to build and load security-operator image")
 		s.T().FailNow()
 	}
 }
@@ -912,70 +963,5 @@ func (s *KindTestSuite) runPlatformMeshOperator(ctx context.Context) {
 	}()
 	s.logger.Info().Msg("PlatformMesh operator started")
 
-	go s.startProvidersOperator(ctx, mgr, &appConfig, commonConfig, mgr.GetLocalManager().GetClient())
-
 	s.mgr = mgr
-}
-
-// startProvidersOperator mirrors cmd/operator.go: wires ProviderReconciler against the
-// providers.platform-mesh.io export, without which WaitProviderSubroutine hangs forever.
-func (s *KindTestSuite) startProvidersOperator(
-	ctx context.Context, mgr mcmanager.Manager, appConfig *config.OperatorConfig,
-	commonConfig *pmconfig.CommonServiceConfig, localClient ctrlruntimeclient.Client,
-) {
-	multiProvider, ok := mgr.GetProvider().(*mcmultiprovider.Provider)
-	if !ok {
-		s.logger.Error().Msg("manager provider is not a multi-provider, cannot register apiexport-providers-platform-mesh provider")
-		return
-	}
-
-	kcpUrl := appConfig.KCP.Url
-	if kcpUrl == "" {
-		kcpUrl = fmt.Sprintf("https://%s-front-proxy.%s:%s", appConfig.KCP.FrontProxyName, appConfig.KCP.Namespace, appConfig.KCP.FrontProxyPort)
-	}
-	kcpUrl += fmt.Sprintf("/clusters/%s", appConfig.Providers.ProvidersAPIExportEndpointSliceWorkspace)
-
-	var kcpCfg *rest.Config
-	err := wait.PollUntilContextCancel(ctx, testWaitForKcpAdminKubeconfigPeriod, true, func(ctx context.Context) (bool, error) {
-		var buildErr error
-		kcpCfg, buildErr = subroutines.BuildKubeconfigFromConfig(localClient, &appConfig.KCP, kcpUrl)
-		if buildErr != nil {
-			s.logger.Warn().Err(buildErr).Msg("trying to retrieve kcp admin kubeconfig for providers operator")
-		}
-		return buildErr == nil, nil
-	})
-	if err != nil {
-		s.logger.Error().Err(err).Msg("failed to retrieve kcp admin config for providers operator")
-		return
-	}
-
-	var apiexportProvider *mcapiexportprovider.Provider
-	err = wait.PollUntilContextCancel(ctx, testWaitForKcpAdminKubeconfigPeriod, true, func(ctx context.Context) (bool, error) {
-		var provErr error
-		apiexportProvider, provErr = mcapiexportprovider.New(kcpCfg, appConfig.Providers.ProvidersAPIExportEndpointSliceName, mcapiexportprovider.Options{Scheme: s.scheme})
-		if provErr != nil {
-			s.logger.Warn().Err(provErr).Msg("failed to create APIExport provider")
-		}
-		return provErr == nil, nil
-	})
-	if err != nil {
-		s.logger.Error().Err(err).Msg("failed to create apiexport-providers-platform-mesh provider")
-		return
-	}
-
-	providersReconciler, err := providerscontroller.NewProviderReconciler(mgr, appConfig, commonConfig, localClient)
-	if err != nil {
-		s.logger.Error().Err(err).Msg("failed to create Providers reconciler")
-		return
-	}
-	if err := providersReconciler.SetupWithManager(mgr, commonConfig); err != nil {
-		s.logger.Error().Err(err).Msg("unable to setup ProviderReconciler with manager")
-		return
-	}
-
-	if err := multiProvider.AddProvider("apiexport-providers-platform-mesh", apiexportProvider); err != nil {
-		s.logger.Error().Err(err).Msg("failed to add apiexport-providers-platform-mesh provider")
-		return
-	}
-	s.logger.Info().Msg("apiexport-providers-platform-mesh provider started, ProviderReconciler registered")
 }
